@@ -164,16 +164,46 @@ class PlayerViewModel(
                 
                 if (tracks.isNotEmpty()) {
                     try {
-                        val playlist = playlistManager.createDefaultPlaylist("所有音乐", tracks)
-                        android.util.Log.d("MusicPlayer", "创建播放列表成功，包含 ${playlist.tracks.size} 首歌曲")
-                        setPlaylist(playlist, 0)
+                        // 先检查是否已存在"所有音乐"播放列表
+                        val existingPlaylist = withContext(Dispatchers.IO) {
+                            playlistManager.getPlaylistByName("所有音乐")
+                        }
+                        
+                        if (existingPlaylist != null) {
+                            // 如果存在，更新它
+                            android.util.Log.d("MusicPlayer", "找到已存在的播放列表，更新中...")
+                            withContext(Dispatchers.IO) {
+                                playlistManager.updateDefaultPlaylist("所有音乐", tracks)
+                            }
+                        } else {
+                            // 如果不存在，创建新的
+                            android.util.Log.d("MusicPlayer", "创建新的播放列表")
+                            withContext(Dispatchers.IO) {
+                                playlistManager.createDefaultPlaylist("所有音乐", tracks)
+                            }
+                        }
+                        
+                        // 重新获取更新后的播放列表
+                        val playlist = withContext(Dispatchers.IO) {
+                            playlistManager.getPlaylistByName("所有音乐")
+                        }
+                        
+                        android.util.Log.d("MusicPlayer", "播放列表处理成功，包含 ${playlist?.tracks?.size ?: 0} 首歌曲")
+                        
                         // 更新播放列表列表
-                        val updatedPlaylists = playlistManager.getAllPlaylists()
+                        val updatedPlaylists = withContext(Dispatchers.IO) {
+                            playlistManager.getAllPlaylists()
+                        }
                         _playlists.value = updatedPlaylists
+                        
+                        // 如果当前没有播放列表，设置这个为当前播放列表
+                        if (_currentPlaylist.value == null && playlist != null) {
+                            setPlaylist(playlist, 0)
+                        }
                     } catch (e: Exception) {
-                        android.util.Log.e("MusicPlayer", "创建播放列表失败", e)
+                        android.util.Log.e("MusicPlayer", "处理播放列表失败", e)
                         e.printStackTrace()
-                        // 创建播放列表失败不影响UI显示
+                        // 处理播放列表失败不影响UI显示
                     }
                 } else {
                     android.util.Log.w("MusicPlayer", "未扫描到任何音乐文件")

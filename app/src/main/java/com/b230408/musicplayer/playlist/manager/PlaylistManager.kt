@@ -133,12 +133,26 @@ class PlaylistManager(private val context: Context) {
     fun deletePlaylist(playlistId: Long): Boolean {
         scope.launch {
             withContext(Dispatchers.IO) {
-                playlistDao.deletePlaylistById(playlistId)
-                playlistTrackDao.deleteTracksByPlaylistId(playlistId)
+                val entity = playlistDao.getPlaylistById(playlistId)
+                if (entity != null) {
+                    playlistTrackDao.deleteTracksByPlaylistId(playlistId)
+                    playlistDao.deletePlaylist(entity)
+                }
             }
             loadPlaylists()
         }
         return true
+    }
+    
+    /**
+     * 删除指定ID的歌单（通过ID）
+     */
+    suspend fun deletePlaylistById(playlistId: Long) = withContext(Dispatchers.IO) {
+        val entity = playlistDao.getPlaylistById(playlistId)
+        if (entity != null) {
+            playlistTrackDao.deleteTracksByPlaylistId(playlistId)
+            playlistDao.deletePlaylist(entity)
+        }
     }
     
     /**
@@ -245,20 +259,59 @@ class PlaylistManager(private val context: Context) {
     
     /**
      * 创建默认歌单（所有音乐）
+     * 如果已存在同名的播放列表，会先删除它们，确保只有一个
      */
-    fun createDefaultPlaylist(name: String = "所有音乐", tracks: List<Track>): Playlist {
+    suspend fun createDefaultPlaylist(name: String = "所有音乐", tracks: List<Track>): Playlist = withContext(Dispatchers.IO) {
+        // 获取所有同名的播放列表
+        val allPlaylistsWithSameName = playlistDao.getPlaylistsByName(name)
+        
+        // 找到最新的播放列表（按 dateModified 排序），用于保留其ID和创建时间
+        val latestPlaylist = allPlaylistsWithSameName.maxByOrNull { it.dateModified }
+        
+        // 删除所有同名的播放列表
+        allPlaylistsWithSameName.forEach { entity ->
+            playlistTrackDao.deleteTracksByPlaylistId(entity.id)
+            playlistDao.deletePlaylist(entity)
+        }
+        
+        // 创建新的播放列表，使用最新播放列表的ID和创建时间（如果存在）
         val playlist = Playlist(
-            id = System.currentTimeMillis(),
+            id = latestPlaylist?.id ?: System.currentTimeMillis(),
             name = name,
             tracks = tracks.toMutableList(),
-            dateCreated = System.currentTimeMillis(),
+            dateCreated = latestPlaylist?.dateCreated ?: System.currentTimeMillis(),
             dateModified = System.currentTimeMillis()
         )
-        scope.launch {
-            savePlaylist(playlist)
-            loadPlaylists()
+        savePlaylist(playlist)
+        playlist
+    }
+    
+    /**
+     * 更新默认歌单（所有音乐）
+     * 会删除所有同名的播放列表，只保留最新的一个
+     */
+    suspend fun updateDefaultPlaylist(name: String = "所有音乐", tracks: List<Track>) = withContext(Dispatchers.IO) {
+        // 获取所有同名的播放列表
+        val allPlaylistsWithSameName = playlistDao.getPlaylistsByName(name)
+        
+        // 找到最新的播放列表（按 dateModified 排序），用于保留其ID和创建时间
+        val latestPlaylist = allPlaylistsWithSameName.maxByOrNull { it.dateModified }
+        
+        // 删除所有同名的播放列表（包括最新的）
+        allPlaylistsWithSameName.forEach { entity ->
+            playlistTrackDao.deleteTracksByPlaylistId(entity.id)
+            playlistDao.deletePlaylist(entity)
         }
-        return playlist
+        
+        // 创建一个新的播放列表，使用最新播放列表的ID和创建时间（如果存在）
+        val updatedPlaylist = Playlist(
+            id = latestPlaylist?.id ?: System.currentTimeMillis(),
+            name = name,
+            tracks = tracks.toMutableList(),
+            dateCreated = latestPlaylist?.dateCreated ?: System.currentTimeMillis(),
+            dateModified = System.currentTimeMillis()
+        )
+        savePlaylist(updatedPlaylist)
     }
     
     /**
