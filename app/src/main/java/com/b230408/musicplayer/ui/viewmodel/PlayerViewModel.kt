@@ -70,9 +70,29 @@ class PlayerViewModel(
         try {
             loadPlaylists()
             startProgressUpdates()
+            setupMusicControllerCallbacks()
         } catch (e: Exception) {
             e.printStackTrace()
             // 初始化失败不应该导致崩溃
+        }
+    }
+    
+    /**
+     * 设置 MusicController 的回调
+     */
+    private fun setupMusicControllerCallbacks() {
+        musicController.playbackStateCallback = { isPlaying ->
+            _isPlaying.value = isPlaying
+        }
+        musicController.progressCallback = { position, duration ->
+            _currentPosition.value = position
+            if (duration > 0 && duration != Long.MAX_VALUE) {
+                _duration.value = duration
+            }
+        }
+        musicController.trackChangedCallback = { track ->
+            _currentTrack.value = track
+            _duration.value = musicController.getDuration()
         }
     }
     
@@ -183,16 +203,28 @@ class PlayerViewModel(
      * 播放
      */
     fun play() {
-        musicController.play()
-        _isPlaying.value = true
+        try {
+            musicController.play()
+            // 不立即设置 isPlaying，等待 MusicService 的实际播放状态
+            // _isPlaying.value = true
+        } catch (e: Exception) {
+            android.util.Log.e("PlayerViewModel", "播放失败", e)
+            e.printStackTrace()
+        }
     }
     
     /**
      * 暂停
      */
     fun pause() {
-        musicController.pause()
-        _isPlaying.value = false
+        try {
+            musicController.pause()
+            // 不立即设置 isPlaying，等待 MusicService 的实际播放状态
+            // _isPlaying.value = false
+        } catch (e: Exception) {
+            android.util.Log.e("PlayerViewModel", "暂停失败", e)
+            e.printStackTrace()
+        }
     }
     
     /**

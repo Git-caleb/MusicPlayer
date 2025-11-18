@@ -41,17 +41,22 @@ class MusicController private constructor(private val context: Context) {
         }
     }
     
+    // 播放状态监听器回调（由外部设置，如 ViewModel）
+    var playbackStateCallback: ((Boolean) -> Unit)? = null
+    var progressCallback: ((Long, Long) -> Unit)? = null
+    var trackChangedCallback: ((Track) -> Unit)? = null
+    
     private val playbackStateListener = object : MusicService.PlaybackStateListener {
         override fun onPlaybackStateChanged(isPlaying: Boolean) {
-            // 处理播放状态改变
+            playbackStateCallback?.invoke(isPlaying)
         }
         
         override fun onProgressChanged(position: Long, duration: Long) {
-            // 处理进度改变
+            progressCallback?.invoke(position, duration)
         }
         
         override fun onTrackChanged(track: Track) {
-            // 处理音轨改变
+            trackChangedCallback?.invoke(track)
         }
     }
     

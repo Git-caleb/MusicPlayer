@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.b230408.musicplayer.player.model.Track
+import com.b230408.musicplayer.playlist.model.Playlist
 import com.b230408.musicplayer.ui.pages.PlayerUI
 import com.b230408.musicplayer.ui.theme.MusicPlayerTheme
 import com.b230408.musicplayer.ui.viewmodel.PlayerViewModel
@@ -63,6 +65,8 @@ fun MainScreen() {
     val isLoading by viewModel.isLoading.collectAsState()
     
     var showPlayerScreen by remember { mutableStateOf(false) }
+    var selectedPlaylist by remember { mutableStateOf<Playlist?>(null) }
+    var showPlaylistDetail by remember { mutableStateOf(false) }
     
     // 请求权限
     val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -88,105 +92,126 @@ fun MainScreen() {
         }
     }
     
-    if (showPlayerScreen && currentTrack != null) {
-        // 播放界面
-        PlayerUI(
-            currentTrack = currentTrack,
-            isPlaying = isPlaying,
-            currentPosition = currentPosition,
-            duration = duration,
-            playbackMode = playbackMode,
-            onPlayPause = {
-                if (isPlaying) viewModel.pause() else viewModel.play()
-            },
-            onPrevious = { viewModel.previous() },
-            onNext = { viewModel.next() },
-            onSeekTo = { viewModel.seekTo(it) },
-            onPlaybackModeChange = { viewModel.setPlaybackMode(it) },
-            onSeekForward = { viewModel.seekForward() },
-            onSeekBackward = { viewModel.seekBackward() },
-            modifier = Modifier.fillMaxSize()
-        )
-    } else {
-        // 主列表界面
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-        ) {
-            // 顶部栏
-            TopAppBar(
-                title = { Text("音乐播放器") },
-                actions = {
-                    IconButton(onClick = { viewModel.scanMusicFiles() }) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "扫描音乐")
-                    }
-                }
+    when {
+        showPlayerScreen && currentTrack != null -> {
+            // 播放界面
+            PlayerUI(
+                currentTrack = currentTrack,
+                isPlaying = isPlaying,
+                currentPosition = currentPosition,
+                duration = duration,
+                playbackMode = playbackMode,
+                onPlayPause = {
+                    if (isPlaying) viewModel.pause() else viewModel.play()
+                },
+                onPrevious = { viewModel.previous() },
+                onNext = { viewModel.next() },
+                onSeekTo = { viewModel.seekTo(it) },
+                onPlaybackModeChange = { viewModel.setPlaybackMode(it) },
+                onSeekForward = { viewModel.seekForward() },
+                onSeekBackward = { viewModel.seekBackward() },
+                onBack = { showPlayerScreen = false },
+                modifier = Modifier.fillMaxSize()
             )
-            
-            if (isLoading) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
-                }
-            } else {
-                // 播放列表
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(playlists) { playlist ->
-                        PlaylistItem(
-                            playlist = playlist,
-                            onClick = {
-                                viewModel.setPlaylist(playlist, 0)
-                                showPlayerScreen = true
-                            }
-                        )
+        }
+        showPlaylistDetail && selectedPlaylist != null -> {
+            // 播放列表详情页
+            PlaylistDetailScreen(
+                playlist = selectedPlaylist!!,
+                onBack = { 
+                    showPlaylistDetail = false
+                    selectedPlaylist = null
+                },
+                onTrackClick = { track: Track, index: Int ->
+                    viewModel.setPlaylist(selectedPlaylist!!, index)
+                    viewModel.play()
+                    showPlaylistDetail = false
+                    showPlayerScreen = true
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        else -> {
+            // 主列表界面
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+            ) {
+            // 顶部栏
+                TopAppBar(
+                    title = { Text("音乐播放器") },
+                    actions = {
+                        IconButton(onClick = { viewModel.scanMusicFiles() }) {
+                            Icon(Icons.Filled.Refresh, contentDescription = "扫描音乐")
+                        }
                     }
-                    
-                    // 如果列表为空，显示提示
-                    if (playlists.isEmpty()) {
-                        item {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally
+                )
+                
+                if (isLoading) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                } else {
+                    // 播放列表
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(playlists) { playlist ->
+                            PlaylistItem(
+                                playlist = playlist,
+                                onClick = {
+                                    selectedPlaylist = playlist
+                                    showPlaylistDetail = true
+                                }
+                            )
+                        }
+                        
+                        // 如果列表为空，显示提示
+                        if (playlists.isEmpty()) {
+                            item {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(
-                                        Icons.Filled.MusicNote,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(64.dp),
-                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                                    )
-                                    Spacer(modifier = Modifier.height(16.dp))
-                                    Text(
-                                        text = "没有找到音乐文件",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                    )
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.MusicNote,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(64.dp),
+                                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                        )
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        Text(
+                                            text = "没有找到音乐文件",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-            
-            // 底部控制栏
-            if (currentTrack != null) {
-                BottomPlayerBar(
-                    track = currentTrack!!,
-                    isPlaying = isPlaying,
-                    onPlayPause = {
-                        if (isPlaying) viewModel.pause() else viewModel.play()
-                    },
-                    onClick = { showPlayerScreen = true }
-                )
+                
+                // 底部控制栏
+                if (currentTrack != null) {
+                    BottomPlayerBar(
+                        track = currentTrack!!,
+                        isPlaying = isPlaying,
+                        onPlayPause = {
+                            if (isPlaying) viewModel.pause() else viewModel.play()
+                        },
+                        onClick = { showPlayerScreen = true }
+                    )
+                }
             }
         }
     }
@@ -194,7 +219,7 @@ fun MainScreen() {
 
 @Composable
 fun PlaylistItem(
-    playlist: com.b230408.musicplayer.playlist.model.Playlist,
+    playlist: Playlist,
     onClick: () -> Unit
 ) {
     Card(
@@ -302,6 +327,109 @@ fun BottomPlayerBar(
                         contentDescription = "播放"
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 播放列表详情页
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PlaylistDetailScreen(
+    playlist: Playlist,
+    onBack: () -> Unit,
+    onTrackClick: (Track, Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        // 顶部栏
+        TopAppBar(
+            title = { Text(playlist.name) },
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "返回"
+                    )
+                }
+            }
+        )
+        
+        // 歌曲列表
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(playlist.tracks.size) { index ->
+                val track = playlist.tracks[index]
+                TrackItem(
+                    track = track,
+                    onClick = { onTrackClick(track, index) }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 歌曲列表项
+ */
+@Composable
+fun TrackItem(
+    track: Track,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Filled.MusicNote,
+                contentDescription = null,
+                modifier = Modifier.size(48.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = track.getDisplayTitle(),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = track.getDisplayArtist(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            IconButton(onClick = onClick) {
+                Icon(Icons.Filled.PlayArrow, contentDescription = "播放")
             }
         }
     }

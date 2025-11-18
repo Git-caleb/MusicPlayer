@@ -45,6 +45,7 @@ fun PlayerUI(
     onPlaybackModeChange: (PlaybackMode) -> Unit,
     onSeekForward: () -> Unit,
     onSeekBackward: () -> Unit,
+    onBack: () -> Unit = {},
     lyrics: List<String> = emptyList(),
     currentLyricIndex: Int = -1,
     modifier: Modifier = Modifier
@@ -74,7 +75,7 @@ fun PlayerUI(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = { /* 返回 */ }) {
+            IconButton(onClick = onBack) {
                 Icon(Icons.Default.ArrowBack, contentDescription = "返回")
             }
             
@@ -153,12 +154,15 @@ fun PlayerUI(
             modifier = Modifier.fillMaxWidth()
         ) {
             Slider(
-                value = animatedPosition,
+                value = if (duration > 0 && duration != Long.MAX_VALUE) animatedPosition else 0f,
                 onValueChange = { newValue ->
-                    sliderPosition = newValue
-                    val newPosition = (newValue * duration).toLong()
-                    onSeekTo(newPosition)
+                    if (duration > 0 && duration != Long.MAX_VALUE) {
+                        sliderPosition = newValue
+                        val newPosition = (newValue * duration).toLong()
+                        onSeekTo(newPosition)
+                    }
                 },
+                enabled = duration > 0 && duration != Long.MAX_VALUE,
                 modifier = Modifier.fillMaxWidth()
             )
             
@@ -172,7 +176,11 @@ fun PlayerUI(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )
                 Text(
-                    text = formatTime(duration),
+                    text = if (duration > 0 && duration != Long.MAX_VALUE) {
+                        formatTime(duration)
+                    } else {
+                        "--:--"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )
