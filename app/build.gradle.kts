@@ -72,7 +72,8 @@ dependencies {
     implementation(libs.coil.compose)
     
     // Permissions
-    implementation(libs.accompanist.permissions)
+    // 使用直接依赖，避免版本解析问题
+    implementation("com.google.accompanist:accompanist-permissions:0.34.0")
     
     // ID3 Tag reading
     // Try org.jaudiotagger first, fallback to direct dependency if needed
