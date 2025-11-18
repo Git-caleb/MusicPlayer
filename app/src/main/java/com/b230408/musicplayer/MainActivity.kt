@@ -13,7 +13,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -160,7 +159,7 @@ fun MainScreen() {
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Icon(
-                                        QueueMusic,
+                                        Icons.Filled.MusicNote,
                                         contentDescription = null,
                                         modifier = Modifier.size(64.dp),
                                         tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
@@ -214,7 +213,7 @@ fun PlaylistItem(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                QueueMusic,
+                Icons.Filled.MusicNote,
                 contentDescription = null,
                 modifier = Modifier.size(48.dp),
                 tint = MaterialTheme.colorScheme.primary
@@ -265,7 +264,7 @@ fun BottomPlayerBar(
         ) {
             // 专辑封面缩略图
             Icon(
-                QueueMusic,
+                Icons.Filled.MusicNote,
                 contentDescription = null,
                 modifier = Modifier.size(48.dp),
                 tint = MaterialTheme.colorScheme.primary

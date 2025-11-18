@@ -52,8 +52,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     
-    // Material Icons Extended
-    implementation("androidx.compose.material:material-icons-extended:1.7.1")
+    // Material Icons Extended (更新版本以支持 AutoMirrored 图标)
+    implementation("androidx.compose.material:material-icons-extended:1.7.2")
     
     // Media3 for audio playback
     implementation(libs.media3.exoplayer)
