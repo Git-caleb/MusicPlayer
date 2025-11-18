@@ -13,7 +13,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.Icons.Default
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -48,7 +47,7 @@ class MainActivity : ComponentActivity() {
     
 }
 
-@OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
 @Composable
 fun MainScreen() {
     val context = LocalContext.current
@@ -73,7 +72,7 @@ fun MainScreen() {
     }
     val permissionState = rememberMultiplePermissionsState(permissions)
     
-    LaunchedEffect(permissionState.allPermissionsGranted) {
+    LaunchedEffect(Unit) {
         try {
             if (permissionState.allPermissionsGranted) {
                 android.util.Log.d("MainActivity", "权限已授予，开始扫描音乐文件")
@@ -120,7 +119,7 @@ fun MainScreen() {
                 title = { Text("音乐播放器") },
                 actions = {
                     IconButton(onClick = { viewModel.scanMusicFiles() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "扫描音乐")
+                        Icon(Icons.Filled.Refresh, contentDescription = "扫描音乐")
                     }
                 }
             )
@@ -160,7 +159,7 @@ fun MainScreen() {
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Icon(
-                                        Icons.Default.QueueMusic,
+                                        Icons.AutoMirrored.Filled.QueueMusic,
                                         contentDescription = null,
                                         modifier = Modifier.size(64.dp),
                                         tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
@@ -214,7 +213,7 @@ fun PlaylistItem(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                Icons.Default.QueueMusic,
+                Icons.AutoMirrored.Filled.QueueMusic,
                 contentDescription = null,
                 modifier = Modifier.size(48.dp),
                 tint = MaterialTheme.colorScheme.primary
@@ -237,7 +236,7 @@ fun PlaylistItem(
             }
             
             IconButton(onClick = onClick) {
-                Icon(Icons.Default.PlayArrow, contentDescription = "播放")
+                Icon(Icons.Filled.PlayArrow, contentDescription = "播放")
             }
         }
     }
@@ -265,7 +264,7 @@ fun BottomPlayerBar(
         ) {
             // 专辑封面缩略图
             Icon(
-                Icons.Default.QueueMusic,
+                Icons.AutoMirrored.Filled.QueueMusic,
                 contentDescription = null,
                 modifier = Modifier.size(48.dp),
                 tint = MaterialTheme.colorScheme.primary
@@ -294,12 +293,12 @@ fun BottomPlayerBar(
             IconButton(onClick = onPlayPause) {
                 if (isPlaying) {
                     Icon(
-                        Icons.Default.Pause,
+                        Icons.Filled.Pause,
                         contentDescription = "暂停"
                     )
                 } else {
                     Icon(
-                        Icons.Default.PlayArrow,
+                        Icons.Filled.PlayArrow,
                         contentDescription = "播放"
                     )
                 }

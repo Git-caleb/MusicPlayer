@@ -48,6 +48,17 @@ object FileUtils {
     }
     
     /**
+     * 判断文件是否为支持的音乐格式（MP3、AAC、OGG、WAV）
+     */
+    fun isAudioFile(file: File): Boolean {
+        if (!file.exists() || !file.isFile) {
+            return false
+        }
+        val extension = getFileExtension(file.name)
+        return listOf("mp3", "aac", "ogg", "wav").contains(extension.lowercase())
+    }
+    
+    /**
      * 获取文件大小
      */
     fun getFileSize(file: File): Long {

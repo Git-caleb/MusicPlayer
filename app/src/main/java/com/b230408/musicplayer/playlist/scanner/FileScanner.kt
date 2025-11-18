@@ -57,12 +57,8 @@ class FileScanner(private val context: Context) {
                             scanDirectoryRecursive(file, tracks)
                         }
                     } else if (file.isFile && !file.name.startsWith(".") && file.canRead()) {
-                        // 检查文件扩展名或通过文件大小判断是否为音频文件
-                        val hasValidExtension = FileUtils.isSupportedAudioFile(file.name)
-                        val isLargeFile = file.length() > 100 * 1024 // 大于100KB的文件
-                        
-                        // 如果有有效的扩展名，或者是大文件（可能是音频），都尝试处理
-                        if (hasValidExtension || isLargeFile) {
+                        // 使用 FileUtils.isAudioFile 判断是否为音频文件
+                        if (FileUtils.isAudioFile(file)) {
                             // 创建Track对象
                             val track = createTrackFromFile(file)
                             track?.let { tracks.add(it) }
@@ -347,12 +343,8 @@ class FileScanner(private val context: Context) {
             if (file.isDirectory) {
                 scanDirectory(file)
             } else if (file.isFile && file.canRead()) {
-                // 检查文件扩展名或通过文件大小判断是否为音频文件
-                val hasValidExtension = FileUtils.isSupportedAudioFile(file.name)
-                val isLargeFile = file.length() > 100 * 1024 // 大于100KB的文件
-                
-                // 如果有有效的扩展名，或者是大文件（可能是音频），都尝试处理
-                if (hasValidExtension || isLargeFile) {
+                // 使用 FileUtils.isAudioFile 判断是否为音频文件
+                if (FileUtils.isAudioFile(file)) {
                     createTrackFromFile(file)?.let { listOf(it) } ?: emptyList()
                 } else {
                     emptyList()

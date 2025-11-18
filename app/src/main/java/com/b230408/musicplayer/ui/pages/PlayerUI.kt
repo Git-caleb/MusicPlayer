@@ -216,7 +216,7 @@ fun PlayerUI(
             // 倒退10秒
             CustomIconButton(
                 onClick = onSeekBackward,
-                icon = Icons.Default.Refresh,
+                icon = Icons.Default.FastRewind,
                 iconSize = 28.dp,
                 buttonSize = 48.dp
             )
@@ -261,7 +261,7 @@ fun PlayerUI(
             // 快进10秒
             CustomIconButton(
                 onClick = onSeekForward,
-                icon = Icons.Default.Refresh,
+                icon = Icons.Default.FastForward,
                 iconSize = 28.dp,
                 buttonSize = 48.dp
             )

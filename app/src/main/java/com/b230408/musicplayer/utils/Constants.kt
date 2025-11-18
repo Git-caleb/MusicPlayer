@@ -49,6 +49,6 @@ object Constants {
      * Notification Channel
      */
     const val NOTIFICATION_CHANNEL_ID = "music_player_channel"
-    const val NOTIFICATION_CHANNEL_NAME = "音乐播放器"
-    const val NOTIFICATION_ID = 1
+    const val NOTIFICATION_CHANNEL_NAME = "音乐播放通知"
+    const val NOTIFICATION_ID = 1001
 }

@@ -56,6 +56,15 @@ class MusicService : Service() {
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 状态恢复逻辑
+        if (intent?.hasExtra("restore_state") == true) {
+            val trackId = intent.getLongExtra("track_id", -1L)
+            val position = intent.getLongExtra("position", 0L)
+            val playbackMode = intent.getStringExtra("playback_mode")
+            // 这里可以恢复播放状态，但需要从Controller获取Track
+            // 暂时跳过，由Controller管理
+        }
+        
         when (intent?.action) {
             Constants.PlayerAction.ACTION_PLAY -> play()
             Constants.PlayerAction.ACTION_PAUSE -> pause()
@@ -102,10 +111,10 @@ class MusicService : Service() {
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         when (playbackState) {
                             Player.STATE_READY -> {
-                                notifyPlaybackStateChanged(true)
+                                // 不在这里通知，避免重复通知
                             }
                             Player.STATE_ENDED -> {
-                                notifyPlaybackStateChanged(false)
+                                // 不在这里通知，避免重复通知
                             }
                         }
                     }
@@ -365,9 +374,18 @@ class MusicService : Service() {
      * 创建PendingIntent
      */
     private fun createPendingIntent(action: String): PendingIntent {
+        val requestCode = when (action) {
+            Constants.PlayerAction.ACTION_PLAY -> 1
+            Constants.PlayerAction.ACTION_PAUSE -> 2
+            Constants.PlayerAction.ACTION_STOP -> 3
+            Constants.PlayerAction.ACTION_NEXT -> 4
+            Constants.PlayerAction.ACTION_PREVIOUS -> 5
+            Constants.PlayerAction.ACTION_SEEK_TO -> 6
+            else -> 0
+        }
         return PendingIntent.getService(
             this,
-            0,
+            requestCode,
             Intent(this, MusicService::class.java).apply {
                 this.action = action
             },

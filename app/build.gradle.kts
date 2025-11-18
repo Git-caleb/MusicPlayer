@@ -2,7 +2,8 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    kotlin("plugin.serialization") version "2.0.21"
+    alias(libs.plugins.kotlin.serialization)
+    kotlin("kapt")
 }
 
 android {
@@ -74,11 +75,16 @@ dependencies {
     implementation(libs.accompanist.permissions)
     
     // ID3 Tag reading
-    // Note: jaudiotagger 可能不在标准仓库中，如果构建失败，可以考虑使用 MediaStore API 替代
+    // Try org.jaudiotagger first, fallback to direct dependency if needed
     implementation("org.jaudiotagger:jaudiotagger:2.0.1")
     
     // Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    
+    // Room Database
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    kapt(libs.androidx.room.compiler)
     
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

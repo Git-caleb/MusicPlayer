@@ -23,6 +23,7 @@ class MusicController private constructor(private val context: Context) {
     private var currentIndex: Int = -1
     private var playbackMode: PlaybackMode = PlaybackMode.SEQUENTIAL
     private val playedIndices = mutableListOf<Int>() // 用于随机播放
+    private val playbackHistory = mutableListOf<Int>() // 播放历史，用于随机播放的上一首
     
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -98,6 +99,8 @@ class MusicController private constructor(private val context: Context) {
             currentPlaylist = playlist
             currentIndex = startIndex.coerceIn(0, playlist.tracks.size - 1)
             playedIndices.clear()
+            playbackHistory.clear()
+            playbackHistory.add(currentIndex)
             playCurrentTrack()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -186,8 +189,14 @@ class MusicController private constructor(private val context: Context) {
                 // 单曲循环，不改变索引
             }
             PlaybackMode.SHUFFLE -> {
-                // 随机选择上一首（简化处理，实际可以维护历史记录）
-                currentIndex = Random.nextInt(playlist.tracks.size)
+                // 从播放历史中获取上一首
+                if (playbackHistory.isNotEmpty() && playbackHistory.size > 1) {
+                    playbackHistory.removeLast() // 移除当前歌曲
+                    currentIndex = playbackHistory.lastOrNull() ?: Random.nextInt(playlist.tracks.size)
+                } else {
+                    // 没有历史记录，随机选择
+                    currentIndex = Random.nextInt(playlist.tracks.size)
+                }
             }
         }
         
@@ -226,6 +235,8 @@ class MusicController private constructor(private val context: Context) {
                 
                 currentIndex = nextIndex
                 playedIndices.add(currentIndex)
+                // 添加到播放历史
+                playbackHistory.add(currentIndex)
             }
         }
         

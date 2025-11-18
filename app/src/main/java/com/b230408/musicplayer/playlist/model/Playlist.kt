@@ -5,7 +5,7 @@ import com.b230408.musicplayer.player.model.Track
 /**
  * 歌单模型
  */
-data class Playlist(
+class Playlist(
     /**
      * 歌单ID
      */
@@ -14,7 +14,7 @@ data class Playlist(
     /**
      * 歌单名称
      */
-    val name: String,
+    var name: String,
     
     /**
      * 歌曲列表
@@ -29,7 +29,7 @@ data class Playlist(
     /**
      * 最后修改时间（毫秒时间戳）
      */
-    val dateModified: Long = System.currentTimeMillis()
+    var dateModified: Long = System.currentTimeMillis()
 ) {
     /**
      * 获取歌单中的歌曲数量
@@ -60,8 +60,44 @@ data class Playlist(
     /**
      * 更新修改时间
      */
-    private fun updateModifiedTime() {
-        // 注意：这是一个不可变数据类，实际应该使用copy()或者改为class
-        // 这里为了简化，假设使用MutableList在外部管理
+    fun updateModifiedTime() {
+        dateModified = System.currentTimeMillis()
+    }
+    
+    /**
+     * 复制方法，用于创建副本
+     */
+    fun copy(
+        id: Long = this.id,
+        name: String = this.name,
+        tracks: MutableList<Track> = this.tracks.toMutableList(),
+        dateCreated: Long = this.dateCreated,
+        dateModified: Long = this.dateModified
+    ): Playlist {
+        return Playlist(id, name, tracks, dateCreated, dateModified)
+    }
+    
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+        
+        other as Playlist
+        
+        if (id != other.id) return false
+        if (name != other.name) return false
+        if (tracks != other.tracks) return false
+        if (dateCreated != other.dateCreated) return false
+        if (dateModified != other.dateModified) return false
+        
+        return true
+    }
+    
+    override fun hashCode(): Int {
+        var result = id.hashCode()
+        result = 31 * result + name.hashCode()
+        result = 31 * result + tracks.hashCode()
+        result = 31 * result + dateCreated.hashCode()
+        result = 31 * result + dateModified.hashCode()
+        return result
     }
 }
