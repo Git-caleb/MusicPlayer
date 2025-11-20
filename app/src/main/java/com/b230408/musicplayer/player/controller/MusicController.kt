@@ -58,6 +58,43 @@ class MusicController private constructor(private val context: Context) {
         override fun onTrackChanged(track: Track) {
             trackChangedCallback?.invoke(track)
         }
+        
+        override fun onPlaybackEnded() {
+            // 播放结束后，根据播放模式自动播放下一首或重新播放当前歌曲
+            val playlist = currentPlaylist ?: return
+            if (playlist.tracks.isEmpty()) return
+            
+            when (playbackMode) {
+                PlaybackMode.SEQUENTIAL -> {
+                    // 顺序播放：播放下一首
+                    currentIndex = if (currentIndex < playlist.tracks.size - 1) {
+                        currentIndex + 1
+                    } else {
+                        0 // 循环到第一首
+                    }
+                    playCurrentTrack()
+                }
+                PlaybackMode.REPEAT_ONE -> {
+                    // 单曲循环：重新播放当前歌曲
+                    playCurrentTrack()
+                }
+                PlaybackMode.SHUFFLE -> {
+                    // 随机播放：随机选择下一首
+                    if (playedIndices.size >= playlist.tracks.size) {
+                        playedIndices.clear()
+                    }
+                    var nextIndex: Int
+                    do {
+                        nextIndex = Random.nextInt(playlist.tracks.size)
+                    } while (nextIndex == currentIndex && playlist.tracks.size > 1)
+                    
+                    currentIndex = nextIndex
+                    playedIndices.add(currentIndex)
+                    playbackHistory.add(currentIndex)
+                    playCurrentTrack()
+                }
+            }
+        }
     }
     
     init {

@@ -1,7 +1,9 @@
 package com.b230408.musicplayer.lyrics.fetcher
 
+import android.content.Context
 import com.b230408.musicplayer.lyrics.model.LyricLine
 import com.b230408.musicplayer.metadata.model.Metadata
+import com.b230408.musicplayer.utils.AssetsUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
@@ -20,7 +22,15 @@ object LyricFetcher {
      * 从网络获取歌词
      * 这里提供一个示例实现，实际项目中可能需要对接具体的歌词API
      */
-    suspend fun fetchLyrics(metadata: Metadata): List<LyricLine>? = withContext(Dispatchers.IO) {
+    suspend fun fetchLyrics(context: Context?, metadata: Metadata, musicFileName: String? = null): List<LyricLine>? = withContext(Dispatchers.IO) {
+        // 优先从 assets 读取歌词
+        if (context != null && musicFileName != null) {
+            val assetsLyrics = AssetsUtils.readLyricsFromAssets(context, musicFileName)
+            if (assetsLyrics != null) {
+                return@withContext parseLRCFormat(assetsLyrics)
+            }
+        }
+        
         val title = metadata.title ?: return@withContext null
         val artist = metadata.artist ?: return@withContext null
         

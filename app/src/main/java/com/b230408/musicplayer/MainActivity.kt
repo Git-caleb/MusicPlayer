@@ -63,10 +63,14 @@ fun MainScreen() {
     val playbackMode by viewModel.playbackMode.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val lyrics by viewModel.lyrics.collectAsState()
+    val currentLyricIndex by viewModel.currentLyricIndex.collectAsState()
     
     var showPlayerScreen by remember { mutableStateOf(false) }
     var selectedPlaylist by remember { mutableStateOf<Playlist?>(null) }
     var showPlaylistDetail by remember { mutableStateOf(false) }
+    // 跟踪是否从播放列表详情页进入播放页面
+    var cameFromPlaylistDetail by remember { mutableStateOf(false) }
     
     // 请求权限
     val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -76,19 +80,26 @@ fun MainScreen() {
     }
     val permissionState = rememberMultiplePermissionsState(permissions)
     
+    // 请求权限
     LaunchedEffect(Unit) {
         try {
-            if (permissionState.allPermissionsGranted) {
-                android.util.Log.d("MainActivity", "权限已授予，开始扫描音乐文件")
-                viewModel.scanMusicFiles()
-            } else {
+            if (!permissionState.allPermissionsGranted) {
                 android.util.Log.d("MainActivity", "权限未授予，请求权限")
                 permissionState.launchMultiplePermissionRequest()
             }
         } catch (e: Exception) {
-            android.util.Log.e("MainActivity", "权限请求或扫描失败", e)
+            android.util.Log.e("MainActivity", "权限请求失败", e)
             e.printStackTrace()
-            // 即使权限请求失败，也不让应用崩溃
+        }
+    }
+    
+    // 监听权限授予状态，授予后延迟扫描（避免启动时立即扫描导致卡顿）
+    LaunchedEffect(permissionState.allPermissionsGranted) {
+        if (permissionState.allPermissionsGranted) {
+            android.util.Log.d("MainActivity", "权限已授予，延迟扫描音乐文件")
+            // 延迟扫描，先让界面显示出来，提升启动速度
+            kotlinx.coroutines.delay(500)
+            viewModel.scanMusicFiles()
         }
     }
     
@@ -110,7 +121,16 @@ fun MainScreen() {
                 onPlaybackModeChange = { viewModel.setPlaybackMode(it) },
                 onSeekForward = { viewModel.seekForward() },
                 onSeekBackward = { viewModel.seekBackward() },
-                onBack = { showPlayerScreen = false },
+                onBack = { 
+                    showPlayerScreen = false
+                    // 如果是从播放列表详情页进入的，恢复显示播放列表详情页
+                    if (cameFromPlaylistDetail) {
+                        showPlaylistDetail = true
+                        cameFromPlaylistDetail = false
+                    }
+                },
+                lyrics = lyrics,
+                currentLyricIndex = currentLyricIndex,
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -118,15 +138,34 @@ fun MainScreen() {
             // 播放列表详情页
             PlaylistDetailScreen(
                 playlist = selectedPlaylist!!,
+                currentTrack = currentTrack,
+                isPlaying = isPlaying,
                 onBack = { 
                     showPlaylistDetail = false
                     selectedPlaylist = null
                 },
                 onTrackClick = { track: Track, index: Int ->
-                    viewModel.setPlaylist(selectedPlaylist!!, index)
-                    viewModel.play()
-                    showPlaylistDetail = false
-                    showPlayerScreen = true
+                    // 检查当前播放的歌曲是否就是点击的歌曲
+                    val isCurrentTrack = currentTrack?.path == track.path || 
+                                        currentTrack?.uri == track.uri
+                    
+                    if (isCurrentTrack) {
+                        // 如果是同一首歌，只打开播放页面，不重新播放
+                        cameFromPlaylistDetail = true
+                        showPlaylistDetail = false
+                        showPlayerScreen = true
+                    } else {
+                        // 如果不是同一首歌，设置播放列表并播放
+                        viewModel.setPlaylist(selectedPlaylist!!, index)
+                        viewModel.play()
+                        // 标记是从播放列表详情页进入的
+                        cameFromPlaylistDetail = true
+                        showPlaylistDetail = false
+                        showPlayerScreen = true
+                    }
+                },
+                onPlayPause = {
+                    if (isPlaying) viewModel.pause() else viewModel.play()
                 },
                 modifier = Modifier.fillMaxSize()
             )
@@ -209,7 +248,11 @@ fun MainScreen() {
                         onPlayPause = {
                             if (isPlaying) viewModel.pause() else viewModel.play()
                         },
-                        onClick = { showPlayerScreen = true }
+                        onClick = { 
+                            // 从主列表界面进入播放页面，标记不是从播放列表详情页进入
+                            cameFromPlaylistDetail = false
+                            showPlayerScreen = true 
+                        }
                     )
                 }
             }
@@ -339,8 +382,11 @@ fun BottomPlayerBar(
 @Composable
 fun PlaylistDetailScreen(
     playlist: Playlist,
+    currentTrack: Track?,
+    isPlaying: Boolean,
     onBack: () -> Unit,
     onTrackClick: (Track, Int) -> Unit,
+    onPlayPause: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -369,9 +415,14 @@ fun PlaylistDetailScreen(
         ) {
             items(playlist.tracks.size) { index ->
                 val track = playlist.tracks[index]
+                val isCurrentTrack = currentTrack?.path == track.path || 
+                                    currentTrack?.uri == track.uri
                 TrackItem(
                     track = track,
-                    onClick = { onTrackClick(track, index) }
+                    isCurrentTrack = isCurrentTrack,
+                    isPlaying = isPlaying && isCurrentTrack,
+                    onClick = { onTrackClick(track, index) },
+                    onPlayPause = onPlayPause
                 )
             }
         }
@@ -384,7 +435,10 @@ fun PlaylistDetailScreen(
 @Composable
 fun TrackItem(
     track: Track,
-    onClick: () -> Unit
+    isCurrentTrack: Boolean = false,
+    isPlaying: Boolean = false,
+    onClick: () -> Unit,
+    onPlayPause: () -> Unit = {}
 ) {
     Card(
         modifier = Modifier
@@ -392,7 +446,11 @@ fun TrackItem(
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = if (isCurrentTrack) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
         )
     ) {
         Row(
@@ -405,7 +463,11 @@ fun TrackItem(
                 Icons.Filled.MusicNote,
                 contentDescription = null,
                 modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.primary
+                tint = if (isCurrentTrack) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                }
             )
 
             Spacer(modifier = Modifier.width(16.dp))
@@ -414,9 +476,14 @@ fun TrackItem(
                 Text(
                     text = track.getDisplayTitle(),
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = if (isCurrentTrack) FontWeight.Bold else FontWeight.Normal,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    color = if (isCurrentTrack) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    }
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
@@ -428,8 +495,34 @@ fun TrackItem(
                 )
             }
 
-            IconButton(onClick = onClick) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = "播放")
+            // 如果是当前播放的歌曲，显示播放/暂停按钮；否则显示播放按钮
+            if (isCurrentTrack) {
+                IconButton(
+                    onClick = {
+                        onPlayPause()
+                    }
+                ) {
+                    if (isPlaying) {
+                        Icon(
+                            Icons.Filled.Pause,
+                            contentDescription = "暂停",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    } else {
+                        Icon(
+                            Icons.Filled.PlayArrow,
+                            contentDescription = "播放",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            } else {
+                IconButton(onClick = onClick) {
+                    Icon(
+                        Icons.Filled.PlayArrow,
+                        contentDescription = "播放"
+                    )
+                }
             }
         }
     }

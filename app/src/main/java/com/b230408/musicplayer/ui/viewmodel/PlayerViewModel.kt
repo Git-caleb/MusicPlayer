@@ -2,12 +2,16 @@ package com.b230408.musicplayer.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.b230408.musicplayer.lyrics.fetcher.LyricFetcher
+import com.b230408.musicplayer.lyrics.model.LyricLine
+import com.b230408.musicplayer.lyrics.player.LyricPlayer
 import com.b230408.musicplayer.player.controller.MusicController
 import com.b230408.musicplayer.player.model.Track
 import com.b230408.musicplayer.player.utils.PlaybackMode
 import com.b230408.musicplayer.playlist.manager.PlaylistManager
 import com.b230408.musicplayer.playlist.model.Playlist
 import com.b230408.musicplayer.playlist.scanner.FileScanner
+import com.b230408.musicplayer.utils.AssetsUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,12 +32,17 @@ class PlayerViewModel(
         // 如果初始化失败，创建一个备用实例（但这不应该发生）
         throw RuntimeException("Failed to initialize MusicController", e)
     }
-    private val playlistManager = try {
-        PlaylistManager(context)
-    } catch (e: Exception) {
-        e.printStackTrace()
-        throw RuntimeException("Failed to initialize PlaylistManager", e)
+    
+    // 延迟初始化 PlaylistManager，避免阻塞启动
+    private val playlistManager: PlaylistManager by lazy {
+        try {
+            PlaylistManager(context)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            throw RuntimeException("Failed to initialize PlaylistManager", e)
+        }
     }
+    
     private val fileScanner = try {
         FileScanner(context)
     } catch (e: Exception) {
@@ -66,14 +75,50 @@ class PlayerViewModel(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
     
+    // 歌词相关状态
+    private val lyricPlayer = LyricPlayer()
+    private val _lyrics = MutableStateFlow<List<String>>(emptyList())
+    val lyrics: StateFlow<List<String>> = _lyrics
+    
+    private val _currentLyricIndex = MutableStateFlow(-1)
+    val currentLyricIndex: StateFlow<Int> = _currentLyricIndex
+    
     init {
         try {
-            loadPlaylists()
+            // 延迟加载播放列表，避免阻塞启动
+            viewModelScope.launch {
+                kotlinx.coroutines.delay(100) // 短暂延迟，让UI先渲染
+                loadPlaylists()
+            }
             startProgressUpdates()
             setupMusicControllerCallbacks()
+            setupLyricPlayer()
         } catch (e: Exception) {
             e.printStackTrace()
             // 初始化失败不应该导致崩溃
+        }
+    }
+    
+    /**
+     * 设置歌词播放器
+     */
+    private fun setupLyricPlayer() {
+        // 监听歌词变化，更新歌词列表和当前索引
+        viewModelScope.launch {
+            lyricPlayer.getCurrentLineFlow().collect { currentLine ->
+                val allLyrics = lyricPlayer.getAllLyrics()
+                _lyrics.value = allLyrics.map { it.text }
+                _currentLyricIndex.value = lyricPlayer.getCurrentLineIndex()
+            }
+        }
+        
+        // 监听播放位置变化，更新歌词同步
+        viewModelScope.launch {
+            _currentPosition.collect { position ->
+                lyricPlayer.updatePosition(position)
+                // 同时更新索引（因为 updatePosition 会触发 Flow 更新）
+                _currentLyricIndex.value = lyricPlayer.getCurrentLineIndex()
+            }
         }
     }
     
@@ -93,6 +138,8 @@ class PlayerViewModel(
         musicController.trackChangedCallback = { track ->
             _currentTrack.value = track
             _duration.value = musicController.getDuration()
+            // 切换歌曲时加载歌词
+            loadLyricsForTrack(track)
         }
     }
     
@@ -107,8 +154,8 @@ class PlayerViewModel(
                 withContext(Dispatchers.IO) {
                     try {
                         fileScanner.triggerMusicDirectoryScan()
-                        // 等待更长时间，让系统完成扫描（特别是 MediaStore）
-                        kotlinx.coroutines.delay(2000) // 增加到 2 秒
+                        // 减少等待时间，提升启动速度（MediaStore 扫描可以在后台进行）
+                        kotlinx.coroutines.delay(500) // 减少到 0.5 秒
                     } catch (e: Exception) {
                         android.util.Log.e("MusicPlayer", "触发媒体扫描失败", e)
                         e.printStackTrace()
@@ -119,6 +166,16 @@ class PlayerViewModel(
                 val tracks = withContext(Dispatchers.IO) {
                     try {
                         val allTracks = mutableListOf<Track>()
+                        
+                        // 先扫描 assets 中的内置音乐文件
+                        try {
+                            val assetsTracks = AssetsUtils.scanAssetsMusic(context)
+                            android.util.Log.d("MusicPlayer", "Assets 扫描到 ${assetsTracks.size} 首内置歌曲")
+                            allTracks.addAll(assetsTracks)
+                        } catch (e: Exception) {
+                            android.util.Log.e("MusicPlayer", "Assets 扫描失败", e)
+                            e.printStackTrace()
+                        }
                         
                         if (directoryPath != null) {
                             // 扫描指定目录
@@ -353,6 +410,106 @@ class PlayerViewModel(
         } catch (e: Exception) {
             e.printStackTrace()
             // 更新失败不应该导致崩溃
+        }
+    }
+    
+    /**
+     * 为当前歌曲加载歌词
+     */
+    private fun loadLyricsForTrack(track: Track) {
+        viewModelScope.launch {
+            try {
+                // 先清除之前的歌词
+                lyricPlayer.clear()
+                _lyrics.value = emptyList()
+                _currentLyricIndex.value = -1
+                
+                // 尝试加载歌词
+                val lyricLines = withContext(Dispatchers.IO) {
+                    // 优先从 assets 加载
+                    val assetsLyrics = AssetsUtils.readLyricsFromAssets(context, track.fileName)
+                    if (assetsLyrics != null) {
+                        // 解析 LRC 格式
+                        parseLRCFormat(assetsLyrics)
+                    } else {
+                        // 尝试从本地文件加载（与音频文件同目录）
+                        // 对于 assets 文件，path 是 "assets://music/xxx.mp3"，需要特殊处理
+                        if (!track.path.startsWith("assets://")) {
+                            val audioFile = java.io.File(track.path)
+                            if (audioFile.exists()) {
+                                val parent = audioFile.parent
+                                val nameWithoutExt = audioFile.nameWithoutExtension
+                                val lrcFile = java.io.File(parent, "$nameWithoutExt.lrc")
+                                if (lrcFile.exists() && lrcFile.isFile) {
+                                    val content = lrcFile.readText(charset = Charsets.UTF_8)
+                                    parseLRCFormat(content)
+                                } else {
+                                    null
+                                }
+                            } else {
+                                null
+                            }
+                        } else {
+                            // assets 文件的歌词应该已经在上面尝试加载了，这里返回 null
+                            null
+                        } ?: run {
+                            // 如果本地文件也没有，尝试从网络获取（如果有元数据）
+                            track.metadata?.let { metadata ->
+                                LyricFetcher.fetchLyrics(context, metadata, track.fileName)
+                            }
+                        }
+                    }
+                }
+                
+                // 设置歌词
+                lyricLines?.let { lines ->
+                    lyricPlayer.setLyrics(lines)
+                    // 立即更新歌词列表
+                    _lyrics.value = lines.map { it.text }
+                    android.util.Log.d("PlayerViewModel", "加载歌词成功，共 ${lines.size} 行")
+                } ?: run {
+                    _lyrics.value = emptyList()
+                    _currentLyricIndex.value = -1
+                    android.util.Log.d("PlayerViewModel", "未找到歌词文件")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PlayerViewModel", "加载歌词失败", e)
+                e.printStackTrace()
+            }
+        }
+    }
+    
+    /**
+     * 解析 LRC 格式歌词
+     */
+    private fun parseLRCFormat(lrcText: String): List<LyricLine>? {
+        return try {
+            val lines = mutableListOf<LyricLine>()
+            // 支持两种格式：[mm:ss.ff] 和 [mm:ss:ff]
+            val regex = Regex("\\[(\\d{2}):(\\d{2})[.:](\\d{2,3})\\](.*)")
+            
+            lrcText.lineSequence().forEach { line ->
+                val match = regex.find(line.trim())
+                if (match != null) {
+                    val minutes = match.groupValues[1].toInt()
+                    val seconds = match.groupValues[2].toInt()
+                    val milliseconds = match.groupValues[3].toInt()
+                    val text = match.groupValues[4].trim()
+                    
+                    // 转换为毫秒时间戳
+                    val timeStamp = (minutes * 60 + seconds) * 1000L + 
+                        if (milliseconds < 100) milliseconds * 10L else milliseconds.toLong()
+                    
+                    if (text.isNotEmpty()) {
+                        lines.add(LyricLine(timeStamp = timeStamp, text = text))
+                    }
+                }
+            }
+            
+            lines.sortedBy { it.timeStamp }
+        } catch (e: Exception) {
+            android.util.Log.e("PlayerViewModel", "解析歌词失败", e)
+            null
         }
     }
     

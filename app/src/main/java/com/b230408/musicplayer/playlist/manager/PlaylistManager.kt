@@ -29,17 +29,22 @@ import android.net.Uri
  */
 class PlaylistManager(private val context: Context) {
     
-    private val database = MusicPlayerDatabase.getDatabase(context)
-    private val playlistDao: PlaylistDao = database.playlistDao()
-    private val trackDao: TrackDao = database.trackDao()
-    private val playlistTrackDao: PlaylistTrackDao = database.playlistTrackDao()
+    // 延迟初始化数据库，避免阻塞启动
+    private val database: MusicPlayerDatabase by lazy {
+        MusicPlayerDatabase.getDatabase(context)
+    }
+    
+    private val playlistDao: PlaylistDao by lazy { database.playlistDao() }
+    private val trackDao: TrackDao by lazy { database.trackDao() }
+    private val playlistTrackDao: PlaylistTrackDao by lazy { database.playlistTrackDao() }
     
     private val playlistsFlow = MutableStateFlow<List<Playlist>>(emptyList())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     
     init {
-        // 在协程作用域中加载歌单
+        // 延迟加载歌单，避免阻塞启动
         scope.launch {
+            kotlinx.coroutines.delay(200) // 延迟200ms，让UI先渲染
             loadPlaylists()
         }
     }

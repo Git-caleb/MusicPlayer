@@ -277,28 +277,53 @@ class FileScanner(private val context: Context) {
                         }
                         
                         // 创建元数据
-                        val metadata = if (title != null || artist != null || album != null) {
+                        // 先尝试使用 MediaStore 的元数据
+                        val metadata = if ((title != null && title.isNotEmpty()) || 
+                                           (artist != null && artist.isNotEmpty()) || 
+                                           (album != null && album.isNotEmpty())) {
+                            // MediaStore 有元数据，使用它
                             com.b230408.musicplayer.metadata.model.Metadata(
-                                title = title,
-                                artist = artist,
-                                album = album
+                                title = title?.takeIf { it.isNotEmpty() },
+                                artist = artist?.takeIf { it.isNotEmpty() },
+                                album = album?.takeIf { it.isNotEmpty() }
                             )
                         } else {
-                            // 尝试从文件读取ID3标签（如果路径可用）
-                            if (path.isNotEmpty()) {
-                                try {
-                                    val file = File(path)
-                                    if (file.exists()) {
-                                        ID3Reader.readMetadata(file)
+                            // MediaStore 没有元数据
+                            null
+                        }
+                        
+                        // 如果 MediaStore 的元数据为空，或者 artist 为空，尝试从文件读取 ID3 标签
+                        val finalMetadata = if (path.isNotEmpty()) {
+                            try {
+                                val file = File(path)
+                                if (file.exists()) {
+                                    val id3Metadata = ID3Reader.readMetadata(file)
+                                    if (id3Metadata != null) {
+                                        // 合并 MediaStore 和 ID3 标签的元数据，优先使用 ID3 标签
+                                        com.b230408.musicplayer.metadata.model.Metadata(
+                                            title = id3Metadata.title ?: metadata?.title,
+                                            artist = id3Metadata.artist ?: metadata?.artist,
+                                            album = id3Metadata.album ?: metadata?.album,
+                                            year = id3Metadata.year ?: metadata?.year,
+                                            genre = id3Metadata.genre ?: metadata?.genre,
+                                            coverArt = id3Metadata.coverArt ?: metadata?.coverArt,
+                                            coverBitmap = id3Metadata.coverBitmap ?: metadata?.coverBitmap,
+                                            trackNumber = id3Metadata.trackNumber ?: metadata?.trackNumber,
+                                            totalTracks = id3Metadata.totalTracks ?: metadata?.totalTracks,
+                                            comment = id3Metadata.comment ?: metadata?.comment
+                                        )
                                     } else {
-                                        null
+                                        metadata
                                     }
-                                } catch (e: Exception) {
-                                    null
+                                } else {
+                                    metadata
                                 }
-                            } else {
-                                null
+                            } catch (e: Exception) {
+                                android.util.Log.e("FileScanner", "读取 ID3 标签失败: $path", e)
+                                metadata
                             }
+                        } else {
+                            metadata
                         }
                         
                         val format = mimeType?.substringAfterLast("/") ?: FileUtils.getFileExtension(fileName)
@@ -311,7 +336,7 @@ class FileScanner(private val context: Context) {
                             fileSize = fileSize,
                             duration = duration,
                             format = format,
-                            metadata = metadata
+                            metadata = finalMetadata
                         )
                         
                         tracks.add(track)

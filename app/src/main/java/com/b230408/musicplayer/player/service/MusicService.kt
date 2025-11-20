@@ -22,6 +22,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.b230408.musicplayer.MainActivity
 import com.b230408.musicplayer.player.model.Track
+import com.b230408.musicplayer.utils.AssetsUtils
 import com.b230408.musicplayer.utils.Constants
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -118,6 +119,7 @@ class MusicService : Service() {
                             Player.STATE_ENDED -> {
                                 android.util.Log.d("MusicService", "播放结束")
                                 notifyPlaybackStateChanged(false)
+                                notifyPlaybackEnded()
                             }
                             Player.STATE_BUFFERING -> {
                                 android.util.Log.d("MusicService", "缓冲中...")
@@ -151,7 +153,7 @@ class MusicService : Service() {
      * 播放指定音轨
      */
     fun playTrack(track: Track) {
-        android.util.Log.d("MusicService", "开始播放音轨: ${track.getDisplayTitle()}, URI: ${track.uri}")
+        android.util.Log.d("MusicService", "开始播放音轨: ${track.getDisplayTitle()}, URI: ${track.uri}, Path: ${track.path}")
         currentTrack = track
         
         // 先请求音频焦点
@@ -165,7 +167,22 @@ class MusicService : Service() {
                 // 停止当前播放
                 stop()
                 
-                val mediaItem = MediaItem.fromUri(track.uri)
+                // 如果是 assets 文件，需要先复制到临时文件
+                val playUri = if (track.path.startsWith("assets://")) {
+                    val fileName = track.fileName
+                    val assetsUri = AssetsUtils.getAssetsMusicUri(this@MusicService, fileName)
+                    if (assetsUri != null) {
+                        android.util.Log.d("MusicService", "使用 assets 临时文件 URI: $assetsUri")
+                        assetsUri
+                    } else {
+                        android.util.Log.e("MusicService", "无法获取 assets 文件 URI，使用原始 URI")
+                        track.uri
+                    }
+                } else {
+                    track.uri
+                }
+                
+                val mediaItem = MediaItem.fromUri(playUri)
                 setMediaItem(mediaItem)
                 prepare()
                 
@@ -219,7 +236,18 @@ class MusicService : Service() {
      * 播放
      */
     fun play() {
-        requestAudioFocus()
+        // 如果已经有焦点请求，直接播放（避免重复请求导致焦点丢失）
+        // 如果没有焦点请求，先请求焦点
+        if (audioFocusRequest == null) {
+            android.util.Log.d("MusicService", "没有音频焦点，请求焦点")
+            if (!requestAudioFocus()) {
+                android.util.Log.w("MusicService", "无法获得音频焦点，播放失败")
+                return
+            }
+        } else {
+            android.util.Log.d("MusicService", "已有音频焦点，直接播放")
+        }
+        
         exoPlayer?.play()
         updateNotification()
     }
@@ -229,7 +257,8 @@ class MusicService : Service() {
      */
     fun pause() {
         exoPlayer?.pause()
-        releaseAudioFocus()
+        // 不释放音频焦点，保持焦点以便快速恢复播放
+        // 只有在 stop() 时才释放焦点
         updateNotification()
     }
     
@@ -314,11 +343,14 @@ class MusicService : Service() {
         audioManager?.let { manager ->
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    // 先释放之前的音频焦点请求
-                    audioFocusRequest?.let { request ->
-                        manager.abandonAudioFocusRequest(request)
+                    // 如果已经有音频焦点请求，直接返回 true（假设已经有焦点）
+                    // 这样可以避免重复请求导致焦点丢失
+                    if (audioFocusRequest != null) {
+                        android.util.Log.d("MusicService", "已经有音频焦点请求，跳过重新请求")
+                        return true
                     }
                     
+                    // 创建新的音频焦点请求
                     audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                         .setAudioAttributes(
                             android.media.AudioAttributes.Builder()
@@ -327,40 +359,61 @@ class MusicService : Service() {
                                 .build()
                         )
                         .setOnAudioFocusChangeListener { focusChange ->
+                            android.util.Log.d("MusicService", "音频焦点变化: $focusChange")
                             when (focusChange) {
                                 AudioManager.AUDIOFOCUS_LOSS -> {
-                                    android.util.Log.d("MusicService", "音频焦点丢失")
-                                    pause()
+                                    android.util.Log.d("MusicService", "音频焦点永久丢失，暂停播放")
+                                    // 永久丢失焦点，暂停播放但不释放焦点（等待重新获得）
+                                    exoPlayer?.pause()
+                                    notifyPlaybackStateChanged(false)
+                                    updateNotification()
                                 }
                                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                                    android.util.Log.d("MusicService", "音频焦点临时丢失")
-                                    pause()
+                                    android.util.Log.d("MusicService", "音频焦点临时丢失，暂停播放")
+                                    // 临时丢失焦点，暂停播放
+                                    exoPlayer?.pause()
+                                    notifyPlaybackStateChanged(false)
+                                    updateNotification()
                                 }
                                 AudioManager.AUDIOFOCUS_GAIN -> {
                                     android.util.Log.d("MusicService", "获得音频焦点")
-                                    play()
+                                    // 获得焦点时，如果之前正在播放，则恢复播放
+                                    // 注意：这里不自动播放，由用户操作触发
                                 }
                             }
                         }
                         .build()
                     
                     val result = manager.requestAudioFocus(audioFocusRequest!!)
-                    android.util.Log.d("MusicService", "音频焦点请求结果: $result")
+                    android.util.Log.d("MusicService", "音频焦点请求结果: $result (${if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) "已授予" else "被拒绝"})")
                     return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
                 } else {
                     @Suppress("DEPRECATION")
                     val result = manager.requestAudioFocus(
                         { focusChange ->
+                            android.util.Log.d("MusicService", "音频焦点变化 (旧API): $focusChange")
                             when (focusChange) {
-                                AudioManager.AUDIOFOCUS_LOSS -> pause()
-                                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> pause()
-                                AudioManager.AUDIOFOCUS_GAIN -> play()
+                                AudioManager.AUDIOFOCUS_LOSS -> {
+                                    android.util.Log.d("MusicService", "音频焦点永久丢失，暂停播放")
+                                    exoPlayer?.pause()
+                                    notifyPlaybackStateChanged(false)
+                                    updateNotification()
+                                }
+                                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                                    android.util.Log.d("MusicService", "音频焦点临时丢失，暂停播放")
+                                    exoPlayer?.pause()
+                                    notifyPlaybackStateChanged(false)
+                                    updateNotification()
+                                }
+                                AudioManager.AUDIOFOCUS_GAIN -> {
+                                    android.util.Log.d("MusicService", "获得音频焦点")
+                                }
                             }
                         },
                         AudioManager.STREAM_MUSIC,
                         AudioManager.AUDIOFOCUS_GAIN
                     )
-                    android.util.Log.d("MusicService", "音频焦点请求结果: $result")
+                    android.util.Log.d("MusicService", "音频焦点请求结果 (旧API): $result")
                     return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
                 }
             } catch (e: Exception) {
@@ -550,12 +603,20 @@ class MusicService : Service() {
     }
     
     /**
+     * 通知播放结束
+     */
+    private fun notifyPlaybackEnded() {
+        playbackStateListeners.forEach { it.onPlaybackEnded() }
+    }
+    
+    /**
      * 播放状态监听器接口
      */
     interface PlaybackStateListener {
         fun onPlaybackStateChanged(isPlaying: Boolean)
         fun onProgressChanged(position: Long, duration: Long)
         fun onTrackChanged(track: Track)
+        fun onPlaybackEnded() // 播放结束回调
     }
     
     /**
