@@ -70,8 +70,8 @@ object AssetsUtils {
             // 获取文件大小（需要读取文件流）
             val fileSize = getAssetFileSize(context, assetPath)
             
-            // 读取 ID3 元数据
-            val metadata = readMetadataFromAssets(context, assetPath)
+            // 读取 ID3 元数据（启动时快速模式，不加载封面）
+            val metadata = readMetadataFromAssets(context, assetPath, loadCover = false)
             
             // 生成唯一 ID（使用文件名哈希）
             val id = fileName.hashCode().toLong()
@@ -112,8 +112,13 @@ object AssetsUtils {
     
     /**
      * 从 assets 读取 ID3 元数据
+     * @param loadCover 是否加载封面（默认 false，启动时跳过封面以提升速度）
      */
-    private fun readMetadataFromAssets(context: Context, assetPath: String): com.b230408.musicplayer.metadata.model.Metadata? {
+    fun readMetadataFromAssets(
+        context: Context, 
+        assetPath: String,
+        loadCover: Boolean = false
+    ): com.b230408.musicplayer.metadata.model.Metadata? {
         return try {
             // 获取原始文件名和扩展名
             val fileName = File(assetPath).name
@@ -128,7 +133,29 @@ object AssetsUtils {
             }
             
             // 尝试读取元数据
-            var metadata = ID3Reader.readMetadata(tempFile)
+            Log.d(TAG, "开始读取 assets 文件元数据: $assetPath, loadCover=$loadCover")
+            var metadata = if (loadCover) {
+                // 完整读取（包括封面）
+                ID3Reader.readMetadata(tempFile)
+            } else {
+                // 快速读取（跳过封面，只读取基本元数据）
+                ID3Reader.readMetadataFast(tempFile)
+            }
+            
+            // 检查元数据
+            if (metadata != null) {
+                if (loadCover) {
+                    Log.d(TAG, "元数据读取成功（含封面） - 标题: ${metadata.title}, 艺术家: ${metadata.artist}")
+                    Log.d(TAG, "封面数据 - coverArt: ${metadata.coverArt != null} (${metadata.coverArt?.size ?: 0} 字节), coverBitmap: ${metadata.coverBitmap != null}")
+                    if (metadata.coverBitmap != null) {
+                        Log.d(TAG, "封面 Bitmap 尺寸: ${metadata.coverBitmap.width}x${metadata.coverBitmap.height}")
+                    }
+                } else {
+                    Log.d(TAG, "元数据读取成功（快速模式，不含封面） - 标题: ${metadata.title}, 艺术家: ${metadata.artist}")
+                }
+            } else {
+                Log.w(TAG, "元数据读取失败: $assetPath")
+            }
             
             // 如果读取失败或艺术家为空，尝试从原始文件名解析
             if (metadata == null || metadata.artist == null || metadata.artist.isEmpty()) {

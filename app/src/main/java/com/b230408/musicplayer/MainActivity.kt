@@ -69,7 +69,6 @@ fun MainScreen() {
     val isLoading by viewModel.isLoading.collectAsState()
     val lyrics by viewModel.lyrics.collectAsState()
     val currentLyricIndex by viewModel.currentLyricIndex.collectAsState()
-    val coverImageUrl by viewModel.coverImageUrl.collectAsState()
     
     var showPlayerScreen by remember { mutableStateOf(false) }
     var selectedPlaylist by remember { mutableStateOf<Playlist?>(null) }
@@ -146,7 +145,6 @@ fun MainScreen() {
                 },
                 lyrics = lyrics,
                 currentLyricIndex = currentLyricIndex,
-                coverImageUrl = coverImageUrl,
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -159,7 +157,10 @@ fun MainScreen() {
                 "${it.id}:${it.tracks.size}:${it.tracks.map { t -> t.id }.sorted().joinToString(",")}"
             } ?: "$currentPlaylistId:0:"
             val updatedPlaylist = remember(currentPlaylistKey) {
-                playlists.find { it.id == currentPlaylistId } ?: selectedPlaylist!!
+                val latest = playlists.find { it.id == currentPlaylistId } ?: selectedPlaylist!!
+                // 同步更新selectedPlaylist，确保使用最新数据
+                selectedPlaylist = latest
+                latest
             }
             
             // 当歌单更新时，自动同步 selectedPlaylist
@@ -189,9 +190,19 @@ fun MainScreen() {
                         showPlaylistDetail = false
                         showPlayerScreen = true
                     } else {
-                        // 如果不是同一首歌，设置播放列表并播放
-                        viewModel.setPlaylist(selectedPlaylist!!, index)
-                        viewModel.play()
+                        // 从最新的播放列表列表中获取最新的播放列表（确保包含新添加的歌曲）
+                        val latestPlaylist = playlists.find { it.id == selectedPlaylist?.id }
+                        if (latestPlaylist != null) {
+                            // 使用最新的播放列表，确保包含新添加的歌曲
+                            viewModel.setPlaylist(latestPlaylist, index)
+                            viewModel.play()
+                            // 更新selectedPlaylist为最新版本
+                            selectedPlaylist = latestPlaylist
+                        } else {
+                            // 如果找不到，使用selectedPlaylist（降级处理）
+                            viewModel.setPlaylist(selectedPlaylist!!, index)
+                            viewModel.play()
+                        }
                         // 标记是从播放列表详情页进入的
                         cameFromPlaylistDetail = true
                         showPlaylistDetail = false

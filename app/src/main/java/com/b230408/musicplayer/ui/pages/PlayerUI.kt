@@ -24,8 +24,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.foundation.Image
@@ -55,8 +53,7 @@ fun PlayerUI(
     onBack: () -> Unit = {},
     modifier: Modifier = Modifier,
     lyrics: List<String> = emptyList(),
-    currentLyricIndex: Int = -1,
-    coverImageUrl: String? = null
+    currentLyricIndex: Int = -1
 ) {
     var sliderPosition by remember(currentPosition, duration) {
         mutableFloatStateOf(
@@ -115,68 +112,96 @@ fun PlayerUI(
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.surface)
         ) {
-            // 优先使用 coverBitmap，如果没有则使用 coverArt（ByteArray），最后使用默认图标
-            val coverBitmap = remember(currentTrack?.metadata) {
-                when {
-                    currentTrack?.metadata?.coverBitmap != null -> {
-                        // 直接使用 Bitmap
-                        android.util.Log.d("PlayerUI", "使用 coverBitmap")
-                        currentTrack.metadata.coverBitmap
+            // 添加调试日志
+            LaunchedEffect(currentTrack?.id) {
+                android.util.Log.d("PlayerUI", "=== 封面状态检查 ===")
+                android.util.Log.d("PlayerUI", "当前歌曲: ${currentTrack?.getDisplayTitle()}")
+                android.util.Log.d("PlayerUI", "歌曲路径: ${currentTrack?.path}")
+                android.util.Log.d("PlayerUI", "metadata 是否存在: ${currentTrack?.metadata != null}")
+                if (currentTrack?.metadata != null) {
+                    android.util.Log.d("PlayerUI", "coverBitmap 是否存在: ${currentTrack.metadata.coverBitmap != null}")
+                    if (currentTrack.metadata.coverBitmap != null) {
+                        android.util.Log.d("PlayerUI", "coverBitmap 尺寸: ${currentTrack.metadata.coverBitmap.width}x${currentTrack.metadata.coverBitmap.height}")
                     }
+                    android.util.Log.d("PlayerUI", "coverArt 是否存在: ${currentTrack.metadata.coverArt != null}")
+                    android.util.Log.d("PlayerUI", "coverArt 大小: ${currentTrack.metadata.coverArt?.size ?: 0} 字节")
+                } else {
+                    android.util.Log.w("PlayerUI", "⚠️ metadata 为 null，无法读取封面")
+                }
+            }
+            
+            // 优先使用本地封面：coverBitmap > coverArt（ByteArray）> 默认图标
+            // 使用 currentTrack?.id 作为 key，确保切换歌曲时重新计算
+            val coverBitmap = remember(
+                currentTrack?.id,
+                currentTrack?.metadata?.coverBitmap,
+                currentTrack?.metadata?.coverArt
+            ) {
+                android.util.Log.d("PlayerUI", "重新计算封面 Bitmap")
+                when {
+                    // 优先使用已解码的 Bitmap
+                    currentTrack?.metadata?.coverBitmap != null -> {
+                        val bitmap = currentTrack.metadata.coverBitmap
+                        android.util.Log.d("PlayerUI", "✓ 使用本地 coverBitmap: ${bitmap?.width}x${bitmap?.height}")
+                        bitmap
+                    }
+                    // 其次尝试从 ByteArray 解码
                     currentTrack?.metadata?.coverArt != null -> {
-                        // 从 ByteArray 解码 Bitmap
                         try {
-                            val bitmap = BitmapFactory.decodeByteArray(
-                                currentTrack.metadata.coverArt,
-                                0,
-                                currentTrack.metadata.coverArt.size
-                            )
-                            android.util.Log.d("PlayerUI", "从 coverArt 解码 Bitmap: ${bitmap?.width}x${bitmap?.height}")
-                            bitmap
+                            val bytes = currentTrack.metadata.coverArt
+                            android.util.Log.d("PlayerUI", "尝试从 coverArt 解码，大小: ${bytes.size} 字节")
+                            if (bytes.isNotEmpty()) {
+                                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                if (bitmap != null) {
+                                    android.util.Log.d("PlayerUI", "✓ 从 coverArt 解码成功: ${bitmap.width}x${bitmap.height}")
+                                    bitmap
+                                } else {
+                                    android.util.Log.w("PlayerUI", "✗ coverArt 解码返回 null，可能数据损坏")
+                                    null
+                                }
+                            } else {
+                                android.util.Log.w("PlayerUI", "✗ coverArt 为空数组")
+                                null
+                            }
                         } catch (e: Exception) {
-                            android.util.Log.e("PlayerUI", "解码 coverArt 失败", e)
+                            android.util.Log.e("PlayerUI", "✗ 解码 coverArt 失败", e)
                             null
                         }
                     }
                     else -> {
-                        android.util.Log.d("PlayerUI", "没有封面数据，使用默认图标")
+                        android.util.Log.d("PlayerUI", "✗ 没有本地封面数据")
                         null
                     }
                 }
             }
             
-            if (coverBitmap != null) {
-                // 使用 Image 组件直接显示 Bitmap（本地封面）
-                Image(
-                    bitmap = coverBitmap.asImageBitmap(),
-                    contentDescription = "专辑封面",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            } else if (coverImageUrl != null) {
-                // 使用 AsyncImage 显示网络封面
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(coverImageUrl)
-                        .crossfade(true)
-                        .placeholder(android.R.drawable.ic_media_play)
-                        .error(android.R.drawable.ic_media_play)
-                        .build(),
-                    contentDescription = "专辑封面",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                // 使用 AsyncImage 显示默认图标
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(android.R.drawable.ic_media_play)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = "专辑封面",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
+            // 显示逻辑：本地封面 > 默认图标
+            when {
+                coverBitmap != null -> {
+                    // 显示本地封面
+                    android.util.Log.d("PlayerUI", "显示本地封面: ${coverBitmap.width}x${coverBitmap.height}")
+                    Image(
+                        bitmap = coverBitmap.asImageBitmap(),
+                        contentDescription = "专辑封面",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+                else -> {
+                    // 显示默认图标（三角形播放符号）
+                    android.util.Log.d("PlayerUI", "显示默认图标（无本地封面）")
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Filled.PlayArrow,
+                            contentDescription = "默认专辑封面",
+                            modifier = Modifier.size(72.dp),
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                }
             }
         }
         

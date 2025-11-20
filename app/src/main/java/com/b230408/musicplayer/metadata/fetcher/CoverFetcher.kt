@@ -22,6 +22,9 @@ object CoverFetcher {
     private const val CONNECT_TIMEOUT = 8000
     private const val READ_TIMEOUT = 10000
     
+    // 内存缓存：key为"artist - title"，value为封面URL
+    private val coverCache = mutableMapOf<String, String?>()
+    
     // JSON解析器
     private val json = Json {
         ignoreUnknownKeys = true
@@ -31,30 +34,63 @@ object CoverFetcher {
     /**
      * 从网络获取封面URL（多源）
      * 返回最佳匹配的封面URL
+     * 支持缓存机制，避免重复请求
      */
     suspend fun fetchCoverUrl(
         title: String,
         artist: String
     ): String? = withContext(Dispatchers.IO) {
-        Log.d(TAG, "开始获取封面: $artist - $title")
+        val cacheKey = "$artist - $title"
         
-        // 并行从多个源搜索
-        val results = listOf(
-            async { fetchFromQQMusic(title, artist) },
-            async { fetchFromNetEase(title, artist) }
-        ).awaitAll().filterNotNull()
-        
-        if (results.isEmpty()) {
-            Log.w(TAG, "未找到封面")
-            return@withContext null
+        // 先检查缓存
+        coverCache[cacheKey]?.let { cachedUrl ->
+            Log.d(TAG, "使用缓存的封面: $cachedUrl")
+            return@withContext cachedUrl
         }
         
-        // 优先使用QQ音乐的封面（版权更全）
-        val bestCover = results.firstOrNull()
-        Log.d(TAG, "最佳封面URL: $bestCover")
+        Log.d(TAG, "开始获取封面: $artist - $title")
         
-        return@withContext bestCover
+        try {
+            // 并行从多个源搜索
+            val results = listOf(
+                async { fetchFromQQMusic(title, artist) },
+                async { fetchFromNetEase(title, artist) }
+            ).awaitAll().filterNotNull()
+            
+            val bestCover = if (results.isEmpty()) {
+                Log.w(TAG, "未找到封面")
+                null
+            } else {
+                // 优先使用QQ音乐的封面（版权更全）
+                val cover = results.firstOrNull()
+                Log.d(TAG, "最佳封面URL: $cover")
+                cover
+            }
+            
+            // 缓存结果（包括null，避免重复请求失败的查询）
+            coverCache[cacheKey] = bestCover
+            
+            return@withContext bestCover
+        } catch (e: Exception) {
+            Log.e(TAG, "获取封面失败", e)
+            // 缓存失败结果，避免重复请求
+            coverCache[cacheKey] = null
+            return@withContext null
+        }
     }
+    
+    /**
+     * 清除缓存
+     */
+    fun clearCache() {
+        coverCache.clear()
+        Log.d(TAG, "封面缓存已清除")
+    }
+    
+    /**
+     * 获取缓存大小
+     */
+    fun getCacheSize(): Int = coverCache.size
     
     /**
      * 从QQ音乐获取封面URL
@@ -127,14 +163,21 @@ object CoverFetcher {
                 return null
             }
             
+            Log.d(TAG, "网易云音乐搜索结果: 歌曲=${song.name}, 专辑=${song.album?.name}, picId=${song.album?.picId}, pic=${song.album?.pic}")
+            
             // 获取封面URL（网易云音乐的封面URL格式）
             val coverUrl = song.album?.let { album ->
-                // 网易云音乐封面URL格式：https://p1.music.126.net/{picId}/{picId}.jpg
-                val picId = album.picId ?: album.pic?.toString()
-                if (picId != null) {
-                    // 使用picId构建封面URL
-                    "https://p1.music.126.net/$picId/$picId.jpg"
+                // 网易云音乐封面URL格式：
+                // https://p1.music.126.net/{picId}/{picId}.jpg?param=500y500 (高质量，推荐)
+                // 注意：picId可能是Long类型，需要转换为String
+                val picId = album.picId?.toString() ?: album.pic?.toString()
+                if (picId != null && picId.isNotEmpty()) {
+                    // 使用高质量URL（500x500），如果失败Coil会显示error占位符
+                    val url = "https://p1.music.126.net/$picId/$picId.jpg?param=500y500"
+                    Log.d(TAG, "构建网易云音乐封面URL: $url (从picId: $picId)")
+                    url
                 } else {
+                    Log.w(TAG, "专辑picId和pic都为空: album=${album.name}")
                     null
                 }
             }

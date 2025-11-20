@@ -10,6 +10,7 @@ import com.b230408.musicplayer.database.entity.PlaylistTrackEntity
 import com.b230408.musicplayer.database.entity.TrackEntity
 import com.b230408.musicplayer.player.model.Track
 import com.b230408.musicplayer.playlist.model.Playlist
+import android.net.Uri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,7 +21,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import android.net.Uri
 
 /**
  * 歌单管理器
@@ -423,13 +423,17 @@ class PlaylistManager(private val context: Context) {
     
     /**
      * TrackEntity转换为Track
+     * 优化：启动时只加载基本元数据，封面延迟加载以提升启动速度
      */
     private fun entityToTrack(entity: TrackEntity): Track {
+        // 使用数据库中的基本元数据，封面在需要时再加载（延迟加载）
+        // 这样可以大幅提升启动速度，避免每次加载播放列表时都重新读取封面
         val metadata = if (entity.title != null || entity.artist != null || entity.album != null) {
             com.b230408.musicplayer.metadata.model.Metadata(
                 title = entity.title,
                 artist = entity.artist,
                 album = entity.album
+                // 封面数据延迟加载，在播放时再读取
             )
         } else {
             null

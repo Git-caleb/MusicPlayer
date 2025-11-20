@@ -6,7 +6,6 @@ import com.b230408.musicplayer.history.manager.PlayHistoryManager
 import com.b230408.musicplayer.lyrics.fetcher.LyricFetcher
 import com.b230408.musicplayer.lyrics.model.LyricLine
 import com.b230408.musicplayer.lyrics.player.LyricPlayer
-import com.b230408.musicplayer.metadata.fetcher.CoverFetcher
 import com.b230408.musicplayer.player.controller.MusicController
 import com.b230408.musicplayer.player.model.Track
 import com.b230408.musicplayer.player.utils.PlaybackMode
@@ -95,9 +94,6 @@ class PlayerViewModel(
     private val _currentLyricIndex = MutableStateFlow(-1)
     val currentLyricIndex: StateFlow<Int> = _currentLyricIndex
     
-    // 封面URL状态
-    private val _coverImageUrl = MutableStateFlow<String?>(null)
-    val coverImageUrl: StateFlow<String?> = _coverImageUrl
     
     init {
         try {
@@ -156,8 +152,8 @@ class PlayerViewModel(
             _duration.value = musicController.getDuration()
             // 切换歌曲时加载歌词
             loadLyricsForTrack(track)
-            // 获取网络封面
-            loadCoverForTrack(track)
+            // 延迟加载封面（如果还没有的话）
+            loadCoverIfNeeded(track)
             // 记录播放历史
             playHistoryManager.recordPlayHistory(track)
         }
@@ -171,17 +167,17 @@ class PlayerViewModel(
             _isLoading.value = true
             try {
                 // 先触发媒体扫描，确保新文件被系统识别
-                withContext(Dispatchers.IO) {
+                // 优化：异步触发，不阻塞启动
+                viewModelScope.launch(Dispatchers.IO) {
                     try {
                         fileScanner.triggerMusicDirectoryScan()
-                        // 减少等待时间，提升启动速度（MediaStore 扫描可以在后台进行）
-                        kotlinx.coroutines.delay(500) // 减少到 0.5 秒
+                        // 媒体扫描在后台进行，不等待
                     } catch (e: Exception) {
                         android.util.Log.e("MusicPlayer", "触发媒体扫描失败", e)
-                        e.printStackTrace()
                         // 媒体扫描失败不影响后续扫描
                     }
                 }
+                // 不等待媒体扫描完成，直接继续扫描（提升启动速度）
                 
                 val tracks = withContext(Dispatchers.IO) {
                     try {
@@ -216,14 +212,22 @@ class PlayerViewModel(
                             if (mediaStoreTracks.isNotEmpty()) {
                                 allTracks.addAll(mediaStoreTracks)
                             } else {
-                                // 如果 MediaStore 扫描不到，直接扫描 Music 目录
-                                try {
-                                    val directoryTracks = fileScanner.scanPath("/storage/emulated/0/Music")
-                                    android.util.Log.d("MusicPlayer", "目录扫描到 ${directoryTracks.size} 首歌曲")
-                                    allTracks.addAll(directoryTracks)
-                                } catch (e: Exception) {
-                                    android.util.Log.e("MusicPlayer", "目录扫描失败", e)
-                                    e.printStackTrace()
+                                // 如果 MediaStore 扫描不到，扫描多个可能的音乐目录
+                                val musicDirs = listOf(
+                                    "/storage/emulated/0/Music",
+                                    "/storage/emulated/0/Download",
+                                    "/storage/emulated/0/QQMusic",
+                                    "/storage/emulated/0/netease/cloudmusic/Music"
+                                )
+                                
+                                musicDirs.forEach { dirPath ->
+                                    try {
+                                        val directoryTracks = fileScanner.scanPath(dirPath)
+                                        android.util.Log.d("MusicPlayer", "目录 $dirPath 扫描到 ${directoryTracks.size} 首歌曲")
+                                        allTracks.addAll(directoryTracks)
+                                    } catch (e: Exception) {
+                                        android.util.Log.w("MusicPlayer", "目录 $dirPath 扫描失败", e)
+                                    }
                                 }
                             }
                         }
@@ -422,10 +426,27 @@ class PlayerViewModel(
     
     /**
      * 更新当前音轨
+     * 优化：保留已加载的封面数据，避免被覆盖
      */
     private fun updateCurrentTrack() {
         try {
-            _currentTrack.value = musicController.getCurrentTrack()
+            val newTrack = musicController.getCurrentTrack()
+            val currentTrack = _currentTrack.value
+            
+            // 如果新 track 和当前 track 是同一首歌曲，且当前 track 有封面，保留封面
+            val updatedTrack = if (newTrack != null && currentTrack != null && 
+                                   newTrack.id == currentTrack.id &&
+                                   (currentTrack.metadata?.coverBitmap != null || 
+                                    (currentTrack.metadata?.coverArt != null && currentTrack.metadata?.coverArt?.isNotEmpty() == true)) &&
+                                   (newTrack.metadata?.coverBitmap == null && 
+                                    (newTrack.metadata?.coverArt == null || newTrack.metadata?.coverArt?.isEmpty() == true))) {
+                // 保留当前 track 的封面，但使用新 track 的其他信息
+                newTrack.copy(metadata = currentTrack.metadata)
+            } else {
+                newTrack
+            }
+            
+            _currentTrack.value = updatedTrack
             _duration.value = musicController.getDuration()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -433,37 +454,50 @@ class PlayerViewModel(
         }
     }
     
+    
     /**
-     * 为当前歌曲加载网络封面
+     * 延迟加载封面（如果需要）
+     * 只在播放时加载，避免启动时阻塞
      */
-    private fun loadCoverForTrack(track: Track) {
+    private fun loadCoverIfNeeded(track: Track) {
         viewModelScope.launch {
             try {
-                // 先清除之前的封面
-                _coverImageUrl.value = null
-                
-                // 如果有本地封面，优先使用本地封面
-                if (track.metadata?.coverBitmap != null || track.metadata?.coverArt != null) {
+                // 如果已经有封面，不需要重新加载
+                if (track.metadata?.coverBitmap != null || 
+                    (track.metadata?.coverArt != null && track.metadata?.coverArt?.isNotEmpty() == true)) {
                     return@launch
                 }
                 
-                // 尝试从网络获取封面
-                val title = track.metadata?.title ?: return@launch
-                val artist = track.metadata?.artist ?: return@launch
+                // 延迟加载封面，不阻塞播放
+                kotlinx.coroutines.delay(200) // 短暂延迟，让播放先开始
                 
-                val coverUrl = withContext(Dispatchers.IO) {
-                    CoverFetcher.fetchCoverUrl(title, artist)
-                }
-                
-                if (coverUrl != null) {
-                    _coverImageUrl.value = coverUrl
-                    android.util.Log.d("PlayerViewModel", "获取封面成功: $coverUrl")
+                // 对于 assets 文件，重新读取完整元数据（包含封面）
+                if (track.path.startsWith("assets://")) {
+                    withContext(Dispatchers.IO) {
+                        try {
+                            val assetPath = track.path.removePrefix("assets://")
+                            val metadata = com.b230408.musicplayer.utils.AssetsUtils.readMetadataFromAssets(
+                                context, 
+                                assetPath, 
+                                loadCover = true // 延迟加载封面
+                            )
+                            
+                            if (metadata != null && (metadata.coverBitmap != null || metadata.coverArt != null)) {
+                                // 更新当前 track 的 metadata（需要重新创建 Track 对象）
+                                val updatedTrack = track.copy(metadata = metadata)
+                                _currentTrack.value = updatedTrack
+                                android.util.Log.d("PlayerViewModel", "延迟加载封面成功: ${track.getDisplayTitle()}")
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("PlayerViewModel", "延迟加载封面失败", e)
+                        }
+                    }
                 } else {
-                    android.util.Log.d("PlayerViewModel", "未找到网络封面")
+                    // 对于普通文件，如果需要封面，可以在这里重新读取文件
+                    // 但为了性能，暂时不实现（封面数据在数据库中丢失了）
                 }
             } catch (e: Exception) {
                 android.util.Log.e("PlayerViewModel", "加载封面失败", e)
-                e.printStackTrace()
             }
         }
     }

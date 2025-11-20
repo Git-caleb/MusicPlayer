@@ -2,6 +2,7 @@ package com.b230408.musicplayer.playlist.scanner
 
 import android.content.ContentResolver
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
@@ -12,6 +13,7 @@ import com.b230408.musicplayer.utils.FileUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileInputStream
 
 /**
  * 文件扫描器
@@ -62,6 +64,12 @@ class FileScanner(private val context: Context) {
                             // 创建Track对象
                             val track = createTrackFromFile(file)
                             track?.let { tracks.add(it) }
+                        } else {
+                            // 记录未识别的文件，便于调试
+                            val extension = FileUtils.getFileExtension(file.name)
+                            if (file.length() > 10000) { // 大于10KB的文件才记录
+                                android.util.Log.d("FileScanner", "跳过文件（格式不支持或格式未知）: ${file.name}, 扩展名: $extension, 大小: ${file.length()} bytes")
+                            }
                         }
                     }
                 } catch (e: SecurityException) {
@@ -174,28 +182,141 @@ class FileScanner(private val context: Context) {
      */
     fun triggerMusicDirectoryScan() {
         try {
-            val musicDir = java.io.File("/storage/emulated/0/Music")
-            if (musicDir.exists() && musicDir.isDirectory && musicDir.canRead()) {
-                val files = musicDir.listFiles()
-                files?.forEach { file ->
-                    try {
-                        if (file.isFile && file.canRead()) {
-                            // 检查文件大小和内容，判断是否为音频文件
-                            if (file.length() > 1000) { // 至少1KB的文件
-                                triggerMediaScan(file.absolutePath)
-                            }
-                        }
-                    } catch (e: Exception) {
-                        // 跳过无法访问的文件
-                        e.printStackTrace()
+            // 扫描多个可能的音乐目录
+            val musicDirs = listOf(
+                "/storage/emulated/0/Music",
+                "/storage/emulated/0/Download",
+                "/storage/emulated/0/QQMusic",
+                "/storage/emulated/0/Android/data/com.tencent.qqmusic/files/QQMusic",
+                "/storage/emulated/0/netease/cloudmusic/Music",
+                "/storage/emulated/0/Android/data/com.netease.cloudmusic/files/Music"
+            )
+            
+            musicDirs.forEach { dirPath ->
+                try {
+                    val musicDir = java.io.File(dirPath)
+                    if (musicDir.exists() && musicDir.isDirectory && musicDir.canRead()) {
+                        android.util.Log.d("FileScanner", "扫描目录: $dirPath")
+                        scanDirectoryForMediaScan(musicDir)
                     }
+                } catch (e: Exception) {
+                    android.util.Log.w("FileScanner", "无法访问目录: $dirPath", e)
                 }
             }
         } catch (e: SecurityException) {
             // 权限不足，记录但不崩溃
-            e.printStackTrace()
+            android.util.Log.e("FileScanner", "权限不足", e)
         } catch (e: Exception) {
-            e.printStackTrace()
+            android.util.Log.e("FileScanner", "扫描失败", e)
+        }
+    }
+    
+    /**
+     * 递归扫描目录并触发媒体扫描
+     */
+    private fun scanDirectoryForMediaScan(directory: File) {
+        try {
+            if (!directory.exists() || !directory.isDirectory || !directory.canRead()) {
+                return
+            }
+            
+            val files = directory.listFiles() ?: return
+            
+            files.forEach { file ->
+                try {
+                    if (file.isDirectory && !file.name.startsWith(".") && file.canRead()) {
+                        // 递归扫描子目录
+                        scanDirectoryForMediaScan(file)
+                    } else if (file.isFile && !file.name.startsWith(".") && file.canRead()) {
+                        // 检查文件大小和格式
+                        if (file.length() > 1000 && FileUtils.isAudioFile(file)) {
+                            triggerMediaScan(file.absolutePath)
+                            android.util.Log.d("FileScanner", "触发媒体扫描: ${file.absolutePath}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    // 跳过无法访问的文件
+                    android.util.Log.w("FileScanner", "跳过文件: ${file.absolutePath}", e)
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("FileScanner", "扫描目录失败: ${directory.absolutePath}", e)
+        }
+    }
+    
+    /**
+     * 从封面路径读取封面数据（ByteArray）
+     */
+    private fun loadCoverArtFromPath(coverPath: String?): ByteArray? {
+        if (coverPath.isNullOrEmpty()) {
+            return null
+        }
+        
+        return try {
+            val coverFile = File(coverPath)
+            if (coverFile.exists() && coverFile.canRead()) {
+                val bytes = coverFile.readBytes()
+                android.util.Log.d("FileScanner", "成功加载封面: $coverPath, 大小: ${bytes.size} 字节")
+                bytes
+            } else {
+                android.util.Log.w("FileScanner", "封面文件不存在或不可读: $coverPath")
+                null
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("FileScanner", "读取封面文件失败: $coverPath", e)
+            null
+        }
+    }
+    
+    /**
+     * 从MediaStore.Albums表获取专辑封面路径
+     */
+    private fun getAlbumArtPath(albumId: Long?): String? {
+        if (albumId == null || albumId <= 0) {
+            return null
+        }
+        
+        return try {
+            val projection = arrayOf(MediaStore.Audio.Albums.ALBUM_ART)
+            val selection = "${MediaStore.Audio.Albums._ID} = ?"
+            val selectionArgs = arrayOf(albumId.toString())
+            
+            contentResolver.query(
+                MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                selectionArgs,
+                null
+            )?.use { cursor ->
+                if (cursor.count > 0 && cursor.moveToFirst()) {
+                    try {
+                        val albumArtColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Albums.ALBUM_ART)
+                        val albumArtPath = cursor.getString(albumArtColumn)
+                        if (!albumArtPath.isNullOrEmpty()) {
+                            android.util.Log.d("FileScanner", "从Albums表获取封面路径成功: albumId=$albumId, path=$albumArtPath")
+                            albumArtPath
+                        } else {
+                            android.util.Log.d("FileScanner", "Albums表封面路径为空: albumId=$albumId")
+                            null
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("FileScanner", "读取Albums表封面列失败: albumId=$albumId", e)
+                        null
+                    }
+                } else {
+                    android.util.Log.d("FileScanner", "Albums表未找到记录: albumId=$albumId")
+                    null
+                }
+            } ?: run {
+                android.util.Log.w("FileScanner", "Albums表查询返回null: albumId=$albumId")
+                null
+            }
+        } catch (e: SecurityException) {
+            android.util.Log.e("FileScanner", "查询Albums表权限不足: albumId=$albumId", e)
+            null
+        } catch (e: Exception) {
+            android.util.Log.e("FileScanner", "查询Albums表失败: albumId=$albumId", e)
+            null
         }
     }
     
@@ -213,6 +334,7 @@ class FileScanner(private val context: Context) {
             MediaStore.Audio.Media.TITLE,
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.ALBUM,
+            MediaStore.Audio.Media.ALBUM_ID,
             MediaStore.Audio.Media.MIME_TYPE
         ).apply {
             // 在 Android 10 以下添加 DATA 列，Android 10+ 可能没有
@@ -246,6 +368,7 @@ class FileScanner(private val context: Context) {
                 val titleColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
                 val artistColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
                 val albumColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
+                val albumIdColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
                 val mimeTypeColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.MIME_TYPE)
                 
                 while (cursor.moveToNext()) {
@@ -263,7 +386,20 @@ class FileScanner(private val context: Context) {
                         val title = cursor.getString(titleColumn)
                         val artist = cursor.getString(artistColumn)
                         val album = cursor.getString(albumColumn)
+                        val albumId = cursor.getLong(albumIdColumn)
                         val mimeType = cursor.getString(mimeTypeColumn)
+                        
+                        // 从MediaStore.Albums表获取封面路径
+                        val albumArtPath = getAlbumArtPath(albumId)
+                        val albumArtBytes = albumArtPath?.let { loadCoverArtFromPath(it) }
+                        val albumArtBitmap = albumArtBytes?.let { bytes ->
+                            try {
+                                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            } catch (e: Exception) {
+                                android.util.Log.e("FileScanner", "解码封面Bitmap失败", e)
+                                null
+                            }
+                        }
                         
                         // 构建URI
                         val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -277,15 +413,18 @@ class FileScanner(private val context: Context) {
                         }
                         
                         // 创建元数据
-                        // 先尝试使用 MediaStore 的元数据
+                        // 先尝试使用 MediaStore 的元数据（包含封面）
                         val metadata = if ((title != null && title.isNotEmpty()) || 
                                            (artist != null && artist.isNotEmpty()) || 
-                                           (album != null && album.isNotEmpty())) {
-                            // MediaStore 有元数据，使用它
+                                           (album != null && album.isNotEmpty()) ||
+                                           albumArtBytes != null) {
+                            // MediaStore 有元数据，使用它（包含封面）
                             com.b230408.musicplayer.metadata.model.Metadata(
                                 title = title?.takeIf { it.isNotEmpty() },
                                 artist = artist?.takeIf { it.isNotEmpty() },
-                                album = album?.takeIf { it.isNotEmpty() }
+                                album = album?.takeIf { it.isNotEmpty() },
+                                coverArt = albumArtBytes,
+                                coverBitmap = albumArtBitmap
                             )
                         } else {
                             // MediaStore 没有元数据
@@ -299,30 +438,45 @@ class FileScanner(private val context: Context) {
                                 if (file.exists()) {
                                     val id3Metadata = ID3Reader.readMetadata(file)
                                     if (id3Metadata != null) {
-                                        // 合并 MediaStore 和 ID3 标签的元数据，优先使用 ID3 标签
+                                        // 合并 MediaStore 和 ID3 标签的元数据
+                                        // 优先使用 ID3 标签的封面（更准确），如果没有则使用 MediaStore 的封面
+                                        val finalCoverArt = id3Metadata.coverArt ?: metadata?.coverArt ?: albumArtBytes
+                                        val finalCoverBitmap = id3Metadata.coverBitmap ?: metadata?.coverBitmap ?: albumArtBitmap
+                                        
+                                        android.util.Log.d("FileScanner", "合并元数据 - 文件: $fileName")
+                                        android.util.Log.d("PlayerUI", "ID3封面: ${id3Metadata.coverArt != null}, MediaStore封面: ${albumArtBytes != null}, 最终封面: ${finalCoverArt != null}")
+                                        
                                         com.b230408.musicplayer.metadata.model.Metadata(
                                             title = id3Metadata.title ?: metadata?.title,
                                             artist = id3Metadata.artist ?: metadata?.artist,
                                             album = id3Metadata.album ?: metadata?.album,
                                             year = id3Metadata.year ?: metadata?.year,
                                             genre = id3Metadata.genre ?: metadata?.genre,
-                                            coverArt = id3Metadata.coverArt ?: metadata?.coverArt,
-                                            coverBitmap = id3Metadata.coverBitmap ?: metadata?.coverBitmap,
+                                            // 优先使用ID3标签的封面，如果没有则使用MediaStore的封面
+                                            coverArt = finalCoverArt,
+                                            coverBitmap = finalCoverBitmap,
                                             trackNumber = id3Metadata.trackNumber ?: metadata?.trackNumber,
                                             totalTracks = id3Metadata.totalTracks ?: metadata?.totalTracks,
                                             comment = id3Metadata.comment ?: metadata?.comment
                                         )
                                     } else {
+                                        // ID3读取失败，使用MediaStore的元数据
+                                        android.util.Log.d("FileScanner", "ID3读取失败，使用MediaStore元数据: $fileName")
                                         metadata
                                     }
                                 } else {
+                                    // 文件不存在，使用MediaStore的元数据
+                                    android.util.Log.d("FileScanner", "文件不存在，使用MediaStore元数据: $path")
                                     metadata
                                 }
                             } catch (e: Exception) {
                                 android.util.Log.e("FileScanner", "读取 ID3 标签失败: $path", e)
+                                // 读取失败，使用MediaStore的元数据
                                 metadata
                             }
                         } else {
+                            // 路径为空，使用MediaStore的元数据
+                            android.util.Log.d("FileScanner", "路径为空，使用MediaStore元数据")
                             metadata
                         }
                         

@@ -62,7 +62,112 @@ object ID3Reader {
     }
     
     /**
-     * 从文件读取元数据
+     * 快速读取元数据（跳过封面，只读取基本信息）
+     * 用于启动时快速加载，提升启动速度
+     */
+    fun readMetadataFast(file: File): Metadata? {
+        return try {
+            // 检查文件是否存在且可读
+            if (!file.exists() || !file.canRead()) {
+                return null
+            }
+            
+            // 使用 try-catch 包裹 AudioFileIO.read，避免抛出未捕获的异常
+            val audioFile = try {
+                AudioFileIO.read(file)
+            } catch (e: Exception) {
+                android.util.Log.w("ID3Reader", "AudioFileIO.read 失败: ${file.name}, 尝试从文件名解析", e)
+                return tryParseFromFileName(file)
+            }
+            
+            val tag = audioFile.tag
+            
+            // 只读取基本字段，跳过封面
+            var title = tag?.getFirst(FieldKey.TITLE) ?: ""
+            var artist = tag?.getFirst(FieldKey.ARTIST) ?: ""
+            var album = tag?.getFirst(FieldKey.ALBUM) ?: ""
+            
+            // 如果 artist 为空，尝试从文件名解析
+            if (artist.isEmpty()) {
+                val fileName = file.nameWithoutExtension
+                val parts = fileName.split(Regex("\\s*-\\s*"), limit = 2)
+                if (parts.size == 2) {
+                    val possibleTitle = parts[0].trim()
+                    val possibleArtist = parts[1].trim()
+                    if (possibleArtist.isNotEmpty() && possibleArtist.length < 50) {
+                        if (title.isEmpty()) {
+                            title = possibleTitle
+                        }
+                        artist = possibleArtist
+                    }
+                }
+            }
+            
+            // 如果仍然为空，尝试从文件名解析
+            val fileName = file.nameWithoutExtension
+            if (title.isEmpty() || artist.isEmpty()) {
+                val parts = fileName.split(Regex("\\s*-\\s*"), limit = 2)
+                if (parts.size == 2) {
+                    val possibleTitle = parts[0].trim()
+                    val possibleArtist = parts[1].trim()
+                    if (possibleTitle.isNotEmpty() && possibleArtist.isNotEmpty() && possibleArtist.length < 50) {
+                        if (title.isEmpty()) {
+                            title = possibleTitle
+                        }
+                        if (artist.isEmpty()) {
+                            artist = possibleArtist
+                        }
+                    }
+                } else if (title.isEmpty() && parts.size == 1) {
+                    title = parts[0].trim()
+                }
+            }
+            
+            // 读取其他基本字段
+            val year = try {
+                tag?.getFirst(FieldKey.YEAR)?.toIntOrNull()
+            } catch (e: Exception) {
+                null
+            }
+            
+            val genre = try {
+                tag?.getFirst(FieldKey.GENRE) ?: ""
+            } catch (e: Exception) {
+                ""
+            }
+            
+            val trackNumber = try {
+                tag?.getFirst(FieldKey.TRACK)?.toIntOrNull()
+            } catch (e: Exception) {
+                null
+            }
+            
+            val comment = try {
+                tag?.getFirst(FieldKey.COMMENT) ?: ""
+            } catch (e: Exception) {
+                ""
+            }
+            
+            // 不读取封面，返回基本元数据
+            Metadata(
+                title = title.ifEmpty { null },
+                artist = artist.ifEmpty { null },
+                album = album.ifEmpty { null },
+                year = year,
+                genre = genre.ifEmpty { null },
+                coverArt = null, // 不加载封面
+                coverBitmap = null, // 不加载封面
+                trackNumber = trackNumber,
+                comment = comment.ifEmpty { null }
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("ID3Reader", "快速读取元数据失败: ${file.name}", e)
+            null
+        }
+    }
+    
+    /**
+     * 从文件读取元数据（完整版本，包括封面）
      */
     fun readMetadata(file: File): Metadata? {
         return try {
@@ -287,30 +392,51 @@ object ID3Reader {
                 ""
             }
             
-            // 读取封面
+            // 读取封面（支持 MP3、FLAC 等格式）
+            android.util.Log.d("ID3Reader", "开始读取封面 - 文件格式: ${audioFile.audioHeader.format}, 文件: ${file.name}")
             val artwork = try {
-                tag?.firstArtwork
+                // 对于 FLAC 文件，JAudioTagger 使用 Vorbis 注释，封面存储在 artwork 字段中
+                // 对于 MP3 文件，封面存储在 ID3v2 标签的 APIC 帧中
+                val firstArtwork = tag?.firstArtwork
+                if (firstArtwork != null) {
+                    android.util.Log.d("ID3Reader", "找到 artwork 对象")
+                    firstArtwork
+                } else {
+                    // 尝试获取所有 artwork（某些文件可能有多个）
+                    val allArtworks = tag?.artworkList
+                    if (allArtworks != null && allArtworks.isNotEmpty()) {
+                        android.util.Log.d("ID3Reader", "找到 ${allArtworks.size} 个 artwork，使用第一个")
+                        allArtworks.first()
+                    } else {
+                        android.util.Log.d("ID3Reader", "未找到 artwork")
+                        null
+                    }
+                }
             } catch (e: Exception) {
-                android.util.Log.w("ID3Reader", "读取封面失败", e)
+                android.util.Log.e("ID3Reader", "读取封面 artwork 失败", e)
                 null
             }
+            
             val coverArt = artwork?.binaryData
             if (coverArt != null) {
-                android.util.Log.d("ID3Reader", "成功读取封面，大小: ${coverArt.size} 字节")
+                android.util.Log.d("ID3Reader", "✓ 成功读取封面数据，大小: ${coverArt.size} 字节")
             } else {
-                android.util.Log.d("ID3Reader", "未找到封面图片")
+                android.util.Log.d("ID3Reader", "✗ 未找到封面图片数据（artwork.binaryData 为空）")
             }
+            
             val coverBitmap = coverArt?.let { bytes ->
                 try {
+                    android.util.Log.d("ID3Reader", "开始解码封面 Bitmap，数据大小: ${bytes.size} 字节")
                     val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                     if (bitmap != null) {
-                        android.util.Log.d("ID3Reader", "成功解码封面 Bitmap，尺寸: ${bitmap.width}x${bitmap.height}")
+                        android.util.Log.d("ID3Reader", "✓ 成功解码封面 Bitmap，尺寸: ${bitmap.width}x${bitmap.height}")
+                        bitmap
                     } else {
-                        android.util.Log.w("ID3Reader", "封面字节数组解码失败")
+                        android.util.Log.w("ID3Reader", "✗ 封面字节数组解码返回 null（可能数据格式不支持）")
+                        null
                     }
-                    bitmap
                 } catch (e: Exception) {
-                    android.util.Log.e("ID3Reader", "解码封面 Bitmap 时出错", e)
+                    android.util.Log.e("ID3Reader", "✗ 解码封面 Bitmap 时出错", e)
                     null
                 }
             }

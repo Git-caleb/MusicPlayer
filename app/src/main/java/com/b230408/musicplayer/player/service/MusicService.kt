@@ -179,7 +179,28 @@ class MusicService : Service() {
                         track.uri
                     }
                 } else {
-                    track.uri
+                    // 优先使用URI，如果URI无效则尝试从路径构建
+                    try {
+                        // 验证URI是否可访问
+                        val uri = track.uri
+                        android.util.Log.d("MusicService", "使用Track URI: $uri")
+                        uri
+                    } catch (e: Exception) {
+                        android.util.Log.w("MusicService", "URI访问失败，尝试使用路径: ${track.path}", e)
+                        // 如果URI失败，尝试从路径构建FileProvider URI
+                        try {
+                            val file = java.io.File(track.path)
+                            if (file.exists() && file.canRead()) {
+                                android.net.Uri.fromFile(file)
+                            } else {
+                                android.util.Log.e("MusicService", "文件不存在或不可读: ${track.path}")
+                                track.uri // 降级使用原始URI
+                            }
+                        } catch (e2: Exception) {
+                            android.util.Log.e("MusicService", "从路径构建URI失败", e2)
+                            track.uri // 降级使用原始URI
+                        }
+                    }
                 }
                 
                 val mediaItem = MediaItem.fromUri(playUri)
