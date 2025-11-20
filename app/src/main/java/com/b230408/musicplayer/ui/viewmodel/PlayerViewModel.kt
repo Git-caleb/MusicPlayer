@@ -72,6 +72,10 @@ class PlayerViewModel(
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
     val playlists: StateFlow<List<Playlist>> = _playlists
     
+    // 缓存所有歌曲列表，避免重复加载
+    private val _allTracksCache = MutableStateFlow<List<Track>>(emptyList())
+    private var allTracksCacheInitialized = false
+    
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
     
@@ -555,6 +559,8 @@ class PlayerViewModel(
                 if (allPlaylists.isNotEmpty()) {
                     _currentPlaylist.value = allPlaylists.first()
                 }
+                // 更新所有歌曲缓存
+                updateAllTracksCache(allPlaylists)
             } catch (e: Exception) {
                 e.printStackTrace()
                 // 加载失败时使用空列表
@@ -562,6 +568,269 @@ class PlayerViewModel(
             }
         }
     }
+    
+    /**
+     * 更新所有歌曲缓存
+     */
+    private fun updateAllTracksCache(playlists: List<Playlist>) {
+        viewModelScope.launch {
+            try {
+                val allMusicPlaylist = playlists.find { it.name == "所有音乐" }
+                if (allMusicPlaylist != null) {
+                    _allTracksCache.value = allMusicPlaylist.tracks
+                    allTracksCacheInitialized = true
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PlayerViewModel", "更新歌曲缓存失败", e)
+            }
+        }
+    }
+    
+    /**
+     * 创建新歌单
+     */
+    fun createPlaylist(name: String) {
+        viewModelScope.launch {
+            try {
+                // 先创建歌单对象
+                val newPlaylist = Playlist(
+                    id = System.currentTimeMillis(),
+                    name = name,
+                    tracks = mutableListOf(),
+                    dateCreated = System.currentTimeMillis(),
+                    dateModified = System.currentTimeMillis()
+                )
+                
+                // 立即添加到列表中，提供即时反馈
+                val currentPlaylists = _playlists.value.toMutableList()
+                currentPlaylists.add(newPlaylist)
+                _playlists.value = currentPlaylists.toList()
+                
+                // 然后异步保存到数据库
+                playlistManager.savePlaylist(newPlaylist)
+                
+                // 重新加载确保数据一致性（可能会调整顺序等）
+                loadPlaylists()
+            } catch (e: Exception) {
+                android.util.Log.e("PlayerViewModel", "创建歌单失败", e)
+                e.printStackTrace()
+                // 出错时重新加载
+                loadPlaylists()
+            }
+        }
+    }
+    
+    /**
+     * 删除歌单
+     */
+    fun deletePlaylist(playlistId: Long) {
+        viewModelScope.launch {
+            try {
+                // 先立即从列表中移除，提供即时反馈
+                val currentPlaylists = _playlists.value.toMutableList()
+                val removed = currentPlaylists.removeAll { it.id == playlistId }
+                if (removed) {
+                    _playlists.value = currentPlaylists.toList()
+                }
+                
+                // 如果删除的是当前播放列表，清空当前播放列表
+                if (_currentPlaylist.value?.id == playlistId) {
+                    _currentPlaylist.value = null
+                    _currentTrack.value = null
+                }
+                
+                // 然后从数据库删除
+                playlistManager.deletePlaylistById(playlistId)
+                // 重新加载确保数据一致性
+                loadPlaylists()
+            } catch (e: Exception) {
+                android.util.Log.e("PlayerViewModel", "删除歌单失败", e)
+                e.printStackTrace()
+                // 出错时重新加载
+                loadPlaylists()
+            }
+        }
+    }
+    
+    /**
+     * 重命名歌单
+     */
+    fun renamePlaylist(playlistId: Long, newName: String) {
+        viewModelScope.launch {
+            try {
+                playlistManager.renamePlaylist(playlistId, newName)
+                loadPlaylists()
+                // 如果重命名的是当前播放列表，更新当前播放列表
+                if (_currentPlaylist.value?.id == playlistId) {
+                    val current = _currentPlaylist.value
+                    if (current != null) {
+                        current.name = newName
+                        _currentPlaylist.value = current
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PlayerViewModel", "重命名歌单失败", e)
+                e.printStackTrace()
+            }
+        }
+    }
+    
+    /**
+     * 向歌单添加歌曲
+     * 优化：只更新当前歌单，不重新加载所有歌单
+     */
+    fun addTrackToPlaylist(playlistId: Long, track: Track) {
+        viewModelScope.launch {
+            try {
+                playlistManager.addTrackToPlaylist(playlistId, track)
+                
+                // 只更新当前歌单，而不是重新加载所有歌单
+                val currentPlaylist = _playlists.value.find { it.id == playlistId }
+                if (currentPlaylist != null) {
+                    // 检查是否已存在，避免重复添加
+                    if (!currentPlaylist.tracks.any { it.id == track.id }) {
+                        // 创建新的 tracks 列表，添加新歌曲
+                        val newTracks = currentPlaylist.tracks.toMutableList()
+                        newTracks.add(track)
+                        
+                        // 创建新的 Playlist 对象，确保引用变化
+                        val updatedPlaylist = Playlist(
+                            id = currentPlaylist.id,
+                            name = currentPlaylist.name,
+                            tracks = newTracks,
+                            dateCreated = currentPlaylist.dateCreated,
+                            dateModified = System.currentTimeMillis()
+                        )
+                        
+                        // 创建新的列表引用，触发 StateFlow 更新
+                        // 使用 toList() 确保创建新列表，触发重组
+                        val newPlaylists = _playlists.value.map { 
+                            if (it.id == playlistId) updatedPlaylist else it
+                        }.toList()
+                        _playlists.value = newPlaylists
+                        
+                        // 如果这是当前播放的歌单，更新当前播放列表
+                        if (_currentPlaylist.value?.id == playlistId) {
+                            _currentPlaylist.value = updatedPlaylist
+                        }
+                    } else {
+                        // 歌曲已存在，不需要更新
+                    }
+                } else {
+                    // 如果找不到，才重新加载所有歌单
+                    loadPlaylists()
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PlayerViewModel", "添加歌曲到歌单失败", e)
+                e.printStackTrace()
+                // 出错时重新加载
+                loadPlaylists()
+            }
+        }
+    }
+    
+    /**
+     * 从歌单移除歌曲
+     * 优化：只更新当前歌单，不重新加载所有歌单
+     */
+    fun removeTrackFromPlaylist(playlistId: Long, track: Track) {
+        viewModelScope.launch {
+            try {
+                playlistManager.removeTrackFromPlaylist(playlistId, track)
+                
+                // 只更新当前歌单，而不是重新加载所有歌单
+                val currentPlaylist = _playlists.value.find { it.id == playlistId }
+                if (currentPlaylist != null) {
+                    // 创建新的 tracks 列表，移除指定歌曲
+                    val newTracks = currentPlaylist.tracks.filter { it.id != track.id }.toMutableList()
+                    
+                    // 创建新的 Playlist 对象，确保引用变化
+                    val updatedPlaylist = Playlist(
+                        id = currentPlaylist.id,
+                        name = currentPlaylist.name,
+                        tracks = newTracks,
+                        dateCreated = currentPlaylist.dateCreated,
+                        dateModified = System.currentTimeMillis()
+                    )
+                    
+                    // 创建新的列表引用，触发 StateFlow 更新
+                    // 使用 toList() 确保创建新列表，触发重组
+                    val newPlaylists = _playlists.value.map { 
+                        if (it.id == playlistId) updatedPlaylist else it
+                    }.toList()
+                    _playlists.value = newPlaylists
+                    
+                    // 如果这是当前播放的歌单，更新当前播放列表
+                    if (_currentPlaylist.value?.id == playlistId) {
+                        _currentPlaylist.value = updatedPlaylist
+                    }
+                } else {
+                    // 如果找不到，才重新加载所有歌单
+                    loadPlaylists()
+                }
+                // 如果移除的是当前播放的歌曲，需要处理
+                if (_currentTrack.value?.id == track.id && _currentPlaylist.value?.id == playlistId) {
+                    // 如果歌单中还有其他歌曲，播放下一首
+                    val updatedPlaylist = playlists.value.find { it.id == playlistId }
+                    if (updatedPlaylist != null && updatedPlaylist.tracks.isNotEmpty()) {
+                        val currentIndex = updatedPlaylist.tracks.indexOfFirst { it.id == track.id }
+                        if (currentIndex >= 0) {
+                            val nextIndex = if (currentIndex < updatedPlaylist.tracks.size - 1) {
+                                currentIndex
+                            } else {
+                                maxOf(0, updatedPlaylist.tracks.size - 1)
+                            }
+                            if (nextIndex >= 0 && nextIndex < updatedPlaylist.tracks.size) {
+                                setPlaylist(updatedPlaylist, nextIndex)
+                            }
+                        }
+                    } else {
+                        // 歌单为空，停止播放
+                        _currentTrack.value = null
+                        _currentPlaylist.value = null
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PlayerViewModel", "从歌单移除歌曲失败", e)
+                e.printStackTrace()
+            }
+        }
+    }
+    
+    /**
+     * 获取所有歌曲（用于添加到歌单）
+     * 使用缓存，避免重复加载
+     */
+    suspend fun getAllTracks(): List<Track> {
+        return withContext(Dispatchers.IO) {
+            try {
+                // 如果缓存已初始化，直接返回缓存
+                if (allTracksCacheInitialized && _allTracksCache.value.isNotEmpty()) {
+                    return@withContext _allTracksCache.value
+                }
+                
+                // 否则从数据库加载
+                val allPlaylists = playlistManager.getAllPlaylists()
+                val allMusicPlaylist = allPlaylists.find { it.name == "所有音乐" }
+                val tracks = allMusicPlaylist?.tracks ?: emptyList()
+                
+                // 更新缓存
+                _allTracksCache.value = tracks
+                allTracksCacheInitialized = true
+                
+                tracks
+            } catch (e: Exception) {
+                android.util.Log.e("PlayerViewModel", "获取所有歌曲失败", e)
+                e.printStackTrace()
+                emptyList()
+            }
+        }
+    }
+    
+    /**
+     * 获取所有歌曲的 Flow（用于 UI 观察）
+     */
+    val allTracks: StateFlow<List<Track>> = _allTracksCache
     
     override fun onCleared() {
         super.onCleared()

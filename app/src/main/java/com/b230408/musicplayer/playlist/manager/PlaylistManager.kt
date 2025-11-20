@@ -320,9 +320,9 @@ class PlaylistManager(private val context: Context) {
     }
     
     /**
-     * 保存歌单到数据库
+     * 保存歌单到数据库（公共方法，供外部调用）
      */
-    private suspend fun savePlaylist(playlist: Playlist) = withContext(Dispatchers.IO) {
+    suspend fun savePlaylist(playlist: Playlist) = withContext(Dispatchers.IO) {
         // 保存歌单实体
         val entity = PlaylistEntity(
             id = playlist.id,
