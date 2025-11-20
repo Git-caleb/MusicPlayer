@@ -27,7 +27,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.lazy.items
 import com.b230408.musicplayer.player.model.Track
 import com.b230408.musicplayer.playlist.model.Playlist
 import com.b230408.musicplayer.ui.pages.PlayerUI
@@ -70,6 +69,7 @@ fun MainScreen() {
     val isLoading by viewModel.isLoading.collectAsState()
     val lyrics by viewModel.lyrics.collectAsState()
     val currentLyricIndex by viewModel.currentLyricIndex.collectAsState()
+    val coverImageUrl by viewModel.coverImageUrl.collectAsState()
     
     var showPlayerScreen by remember { mutableStateOf(false) }
     var selectedPlaylist by remember { mutableStateOf<Playlist?>(null) }
@@ -84,6 +84,8 @@ fun MainScreen() {
     // 添加歌曲到歌单对话框
     var showAddTrackDialog by remember { mutableStateOf(false) }
     var playlistToAddTrack by remember { mutableStateOf<Playlist?>(null) }
+    // 播放历史记录界面
+    var showPlayHistory by remember { mutableStateOf(false) }
     
     // 请求权限
     val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -144,6 +146,7 @@ fun MainScreen() {
                 },
                 lyrics = lyrics,
                 currentLyricIndex = currentLyricIndex,
+                coverImageUrl = coverImageUrl,
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -219,6 +222,34 @@ fun MainScreen() {
                 modifier = Modifier.fillMaxSize()
             )
         }
+        showPlayHistory -> {
+            // 播放历史记录界面
+            PlayHistoryScreen(
+                viewModel = viewModel,
+                currentTrack = currentTrack,
+                isPlaying = isPlaying,
+                onBack = { showPlayHistory = false },
+                onTrackClick = { track ->
+                    // 查找歌曲所在的播放列表
+                    val playlist = playlists.find { playlist ->
+                        playlist.tracks.any { it.id == track.id }
+                    }
+                    if (playlist != null) {
+                        val index = playlist.tracks.indexOfFirst { it.id == track.id }
+                        if (index >= 0) {
+                            viewModel.setPlaylist(playlist, index)
+                            viewModel.play()
+                            showPlayHistory = false
+                            showPlayerScreen = true
+                        }
+                    }
+                },
+                onPlayPause = {
+                    if (isPlaying) viewModel.pause() else viewModel.play()
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
         else -> {
             // 主列表界面
             Column(
@@ -230,6 +261,9 @@ fun MainScreen() {
                 TopAppBar(
                     title = { Text("音乐播放器") },
                     actions = {
+                        IconButton(onClick = { showPlayHistory = true }) {
+                            Icon(Icons.Filled.History, contentDescription = "播放历史")
+                        }
                         IconButton(onClick = { showCreatePlaylistDialog = true }) {
                             Icon(Icons.Filled.Add, contentDescription = "创建歌单")
                         }
@@ -259,9 +293,6 @@ fun MainScreen() {
                                 onClick = {
                                     selectedPlaylist = playlist
                                     showPlaylistDetail = true
-                                },
-                                onLongClick = {
-                                    selectedPlaylist = playlist
                                 },
                                 onRename = {
                                     playlistToRename = playlist
@@ -385,7 +416,6 @@ fun MainScreen() {
 fun PlaylistItem(
     playlist: Playlist,
     onClick: () -> Unit,
-    onLongClick: () -> Unit = {},
     onRename: () -> Unit = {},
     onDelete: () -> Unit = {}
 ) {
@@ -1025,4 +1055,176 @@ fun AddTrackToPlaylistDialog(
             }
         }
     )
+}
+
+/**
+ * 播放历史记录界面
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PlayHistoryScreen(
+    viewModel: PlayerViewModel,
+    currentTrack: Track?,
+    isPlaying: Boolean,
+    onBack: () -> Unit,
+    onTrackClick: (Track) -> Unit,
+    onPlayPause: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val playHistory: List<Pair<Track, com.b230408.musicplayer.database.entity.PlayHistoryEntity>> by 
+        viewModel.getPlayHistory().collectAsState(initial = emptyList())
+    val scope = rememberCoroutineScope()
+    var showClearDialog by remember { mutableStateOf(false) }
+    
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        // 顶部栏
+        TopAppBar(
+            title = { Text("播放历史") },
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                }
+            },
+            actions = {
+                IconButton(
+                    onClick = { showClearDialog = true },
+                    enabled = playHistory.isNotEmpty()
+                ) {
+                    Icon(Icons.Filled.Delete, contentDescription = "清空历史")
+                }
+            }
+        )
+        
+        if (playHistory.isEmpty()) {
+            // 空状态
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.History,
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    )
+                    Text(
+                        text = "暂无播放历史",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                }
+            }
+        } else {
+            // 播放历史列表
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(
+                    items = playHistory,
+                    key = { "${it.second.id}_${it.second.playTime}" }
+                ) { item ->
+                    val (track, history) = item
+                    val isCurrentTrack = currentTrack?.id == track.id
+                    val playTime = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+                        .format(java.util.Date(history.playTime))
+                    
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onTrackClick(track) },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isCurrentTrack) {
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            }
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Filled.MusicNote,
+                                contentDescription = null,
+                                modifier = Modifier.size(40.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = track.getDisplayTitle(),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = track.getDisplayArtist(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = playTime,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                            if (isCurrentTrack) {
+                                IconButton(onClick = onPlayPause) {
+                                    Icon(
+                                        if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                        contentDescription = if (isPlaying) "暂停" else "播放",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // 清空历史对话框
+    if (showClearDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearDialog = false },
+            title = { Text("清空播放历史") },
+            text = { Text("确定要清空所有播放历史吗？此操作不可恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            viewModel.clearPlayHistory()
+                            showClearDialog = false
+                        }
+                    }
+                ) {
+                    Text("确定")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 }

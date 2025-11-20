@@ -1,3 +1,6 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -20,6 +23,27 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // 加载签名配置
+    val keystorePropertiesFile = rootProject.file("app/keystore.properties")
+    val keystoreProperties = Properties()
+    if (keystorePropertiesFile.exists()) {
+        keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+    }
+
+    signingConfigs {
+        create("release") {
+            if (keystorePropertiesFile.exists()) {
+                keyAlias = keystoreProperties["keyAlias"]?.toString() ?: ""
+                keyPassword = keystoreProperties["keyPassword"]?.toString() ?: ""
+                val storeFileStr = keystoreProperties["storeFile"]?.toString()
+                if (storeFileStr != null) {
+                    storeFile = file(storeFileStr)
+                }
+                storePassword = keystoreProperties["storePassword"]?.toString() ?: ""
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -27,6 +51,13 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // 如果keystore存在，使用签名配置；否则使用调试签名
+            if (keystorePropertiesFile.exists() && file(keystoreProperties["storeFile"] as String).exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            } else {
+                // 使用调试签名作为备用（仅用于测试）
+                signingConfig = signingConfigs.getByName("debug")
+            }
         }
     }
     compileOptions {

@@ -55,7 +55,8 @@ fun PlayerUI(
     onBack: () -> Unit = {},
     modifier: Modifier = Modifier,
     lyrics: List<String> = emptyList(),
-    currentLyricIndex: Int = -1
+    currentLyricIndex: Int = -1,
+    coverImageUrl: String? = null
 ) {
     var sliderPosition by remember(currentPosition, duration) {
         mutableFloatStateOf(
@@ -107,10 +108,10 @@ fun PlayerUI(
         
         Spacer(modifier = Modifier.height(8.dp))
         
-        // 专辑封面（缩小尺寸以节省空间）
+        // 专辑封面（缩小尺寸以节省空间给歌词）
         Box(
             modifier = Modifier
-                .size(240.dp)
+                .size(120.dp)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.surface)
         ) {
@@ -145,9 +146,22 @@ fun PlayerUI(
             }
             
             if (coverBitmap != null) {
-                // 使用 Image 组件直接显示 Bitmap
+                // 使用 Image 组件直接显示 Bitmap（本地封面）
                 Image(
                     bitmap = coverBitmap.asImageBitmap(),
+                    contentDescription = "专辑封面",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else if (coverImageUrl != null) {
+                // 使用 AsyncImage 显示网络封面
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(coverImageUrl)
+                        .crossfade(true)
+                        .placeholder(android.R.drawable.ic_media_play)
+                        .error(android.R.drawable.ic_media_play)
+                        .build(),
                     contentDescription = "专辑封面",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
@@ -166,7 +180,7 @@ fun PlayerUI(
             }
         }
         
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
         
         // 歌曲信息
         Column(
@@ -175,18 +189,18 @@ fun PlayerUI(
         ) {
             Text(
                 text = currentTrack?.getDisplayTitle() ?: "未知标题",
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             
             Text(
                 text = currentTrack?.getDisplayArtist() ?: "未知艺术家",
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                 textAlign = TextAlign.Center,
                 maxLines = 1,
@@ -194,7 +208,7 @@ fun PlayerUI(
             )
         }
         
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(16.dp))
         
         // 进度条
         Column(
@@ -280,11 +294,11 @@ fun PlayerUI(
                 }
             }
             
-            // 使用 LazyColumn 实现更好的滚动性能
+            // 使用 LazyColumn 实现更好的滚动性能（增加高度以显示更多歌词）
             LazyColumn(
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(max = 180.dp)
+                    .heightIn(max = 300.dp)
                     .fillMaxWidth(),
                 state = lazyListState,
                 horizontalAlignment = Alignment.CenterHorizontally,

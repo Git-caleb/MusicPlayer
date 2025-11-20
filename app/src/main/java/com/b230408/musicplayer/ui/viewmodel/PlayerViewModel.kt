@@ -2,9 +2,11 @@ package com.b230408.musicplayer.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.b230408.musicplayer.history.manager.PlayHistoryManager
 import com.b230408.musicplayer.lyrics.fetcher.LyricFetcher
 import com.b230408.musicplayer.lyrics.model.LyricLine
 import com.b230408.musicplayer.lyrics.player.LyricPlayer
+import com.b230408.musicplayer.metadata.fetcher.CoverFetcher
 import com.b230408.musicplayer.player.controller.MusicController
 import com.b230408.musicplayer.player.model.Track
 import com.b230408.musicplayer.player.utils.PlaybackMode
@@ -13,6 +15,7 @@ import com.b230408.musicplayer.playlist.model.Playlist
 import com.b230408.musicplayer.playlist.scanner.FileScanner
 import com.b230408.musicplayer.utils.AssetsUtils
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -41,6 +44,11 @@ class PlayerViewModel(
             e.printStackTrace()
             throw RuntimeException("Failed to initialize PlaylistManager", e)
         }
+    }
+    
+    // 播放历史管理器
+    private val playHistoryManager: PlayHistoryManager by lazy {
+        PlayHistoryManager(context)
     }
     
     private val fileScanner = try {
@@ -86,6 +94,10 @@ class PlayerViewModel(
     
     private val _currentLyricIndex = MutableStateFlow(-1)
     val currentLyricIndex: StateFlow<Int> = _currentLyricIndex
+    
+    // 封面URL状态
+    private val _coverImageUrl = MutableStateFlow<String?>(null)
+    val coverImageUrl: StateFlow<String?> = _coverImageUrl
     
     init {
         try {
@@ -144,6 +156,10 @@ class PlayerViewModel(
             _duration.value = musicController.getDuration()
             // 切换歌曲时加载歌词
             loadLyricsForTrack(track)
+            // 获取网络封面
+            loadCoverForTrack(track)
+            // 记录播放历史
+            playHistoryManager.recordPlayHistory(track)
         }
     }
     
@@ -414,6 +430,41 @@ class PlayerViewModel(
         } catch (e: Exception) {
             e.printStackTrace()
             // 更新失败不应该导致崩溃
+        }
+    }
+    
+    /**
+     * 为当前歌曲加载网络封面
+     */
+    private fun loadCoverForTrack(track: Track) {
+        viewModelScope.launch {
+            try {
+                // 先清除之前的封面
+                _coverImageUrl.value = null
+                
+                // 如果有本地封面，优先使用本地封面
+                if (track.metadata?.coverBitmap != null || track.metadata?.coverArt != null) {
+                    return@launch
+                }
+                
+                // 尝试从网络获取封面
+                val title = track.metadata?.title ?: return@launch
+                val artist = track.metadata?.artist ?: return@launch
+                
+                val coverUrl = withContext(Dispatchers.IO) {
+                    CoverFetcher.fetchCoverUrl(title, artist)
+                }
+                
+                if (coverUrl != null) {
+                    _coverImageUrl.value = coverUrl
+                    android.util.Log.d("PlayerViewModel", "获取封面成功: $coverUrl")
+                } else {
+                    android.util.Log.d("PlayerViewModel", "未找到网络封面")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PlayerViewModel", "加载封面失败", e)
+                e.printStackTrace()
+            }
         }
     }
     
@@ -831,6 +882,29 @@ class PlayerViewModel(
      * 获取所有歌曲的 Flow（用于 UI 观察）
      */
     val allTracks: StateFlow<List<Track>> = _allTracksCache
+    
+    /**
+     * 获取播放历史（Flow形式）
+     */
+    fun getPlayHistory(): Flow<List<Pair<Track, com.b230408.musicplayer.database.entity.PlayHistoryEntity>>> {
+        return playHistoryManager.getAllHistory()
+    }
+    
+    /**
+     * 获取最近的播放历史
+     */
+    suspend fun getRecentHistory(limit: Int = 50): List<Pair<Track, com.b230408.musicplayer.database.entity.PlayHistoryEntity>> {
+        return playHistoryManager.getRecentHistory(limit)
+    }
+    
+    /**
+     * 清空播放历史
+     */
+    fun clearPlayHistory() {
+        viewModelScope.launch {
+            playHistoryManager.clearAllHistory()
+        }
+    }
     
     override fun onCleared() {
         super.onCleared()
